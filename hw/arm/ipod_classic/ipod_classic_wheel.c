@@ -336,6 +336,57 @@ static void wheel_tick(void *opaque)
 #define KEY_D       0x20
 #define KEY_ENTER   0x1c
 
+/* Owe the guest `steps` wheel positions (signed: + is clockwise). */
+static void wheel_turn(IPodClassicWheelState *s, int32_t steps)
+{
+    s->pending_steps += steps;
+    s->touched = true;
+    s->untouch_at = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->untouch_ns;
+    wheel_kick(s);
+}
+
+static void wheel_button(IPodClassicWheelState *s, uint32_t bit, bool pressed)
+{
+    if (pressed) {
+        s->buttons |= bit;
+    } else {
+        s->buttons &= ~bit;
+    }
+    /*
+     * Both edges start the repeat window, because the retailOS acts on the
+     * UP one and needs to see it as clearly as the DOWN one.
+     */
+    s->button_repeat_until = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)
+                           + s->button_repeat_ns;
+    wheel_kick(s);
+}
+
+/*
+ * The mouse, for the SDL window: the scroll wheel turns the click wheel
+ * (scrolling down is clockwise, which moves a menu highlight down), the left
+ * button is SELECT and the right button is MENU. Registered as an absolute pointer so SDL forwards
+ * events without grabbing the host cursor; the position is ignored.
+ */
+static void wheel_mouse_event(void *opaque, int dx, int dy, int dz,
+                              int buttons_state)
+{
+    IPodClassicWheelState *s = opaque;
+    static const struct { int mouse; uint32_t wheel; } map[] = {
+        { MOUSE_EVENT_LBUTTON, S5L8702_WHEEL_BTN_SELECT },
+        { MOUSE_EVENT_RBUTTON, S5L8702_WHEEL_BTN_MENU },
+    };
+
+    if (dz) {
+        wheel_turn(s, dz * (int32_t)s->key_step);
+    }
+    for (int i = 0; i < ARRAY_SIZE(map); i++) {
+        bool down = buttons_state & map[i].mouse;
+        if (down != !!(s->buttons & map[i].wheel)) {
+            wheel_button(s, map[i].wheel, down);
+        }
+    }
+}
+
 static void wheel_key_event(void *opaque, int keycode)
 {
     IPodClassicWheelState *s = opaque;
@@ -364,32 +415,17 @@ static void wheel_key_event(void *opaque, int keycode)
          * and paid out by the tick. The release is ignored: a wheel has no
          * "up", and stepping on both edges would double every movement.
          */
-        if (released) {
-            return;
+        if (!released) {
+            wheel_turn(s, ((keycode & 0x7f) == KEY_E)
+                          ? (int32_t)s->key_step : -(int32_t)s->key_step);
         }
-        s->pending_steps += ((keycode & 0x7f) == KEY_E)
-                          ? (int32_t)s->key_step : -(int32_t)s->key_step;
-        s->touched = true;
-        s->untouch_at = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->untouch_ns;
-        wheel_kick(s);
         return;
 
     default:
         return;
     }
 
-    if (released) {
-        s->buttons &= ~bit;
-    } else {
-        s->buttons |= bit;
-    }
-    /*
-     * Both edges start the repeat window, because the retailOS acts on the
-     * UP one and needs to see it as clearly as the DOWN one.
-     */
-    s->button_repeat_until = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)
-                           + s->button_repeat_ns;
-    wheel_kick(s);
+    wheel_button(s, bit, !released);
 }
 
 /* ------------------------------------------------------------------ */
@@ -580,6 +616,7 @@ static void ipod_classic_wheel_realize(DeviceState *dev, Error **errp)
 
     s->tick = timer_new_ns(QEMU_CLOCK_VIRTUAL, wheel_tick, s);
     qemu_add_kbd_event_handler(wheel_key_event, s);
+    qemu_add_mouse_event_handler(wheel_mouse_event, s, 1, "iPod click wheel");
 }
 
 /*

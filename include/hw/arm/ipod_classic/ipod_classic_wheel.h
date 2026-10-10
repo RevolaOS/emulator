@@ -18,7 +18,7 @@
  * WHEELGO, WHEELDIV, WHEELSTAT, WHEELMASK and WHEELPEND are names this port
  * invented to say what it believes each one does. The semantics are from
  * Apple's own code, disassembled with --adjust-vma=0x07FF51B8 over
- * assets/classic6g/osos_decrypted.bin.
+ * assets/firmware/24.9.1.2/osos_decrypted.bin.
  *
  *   +0x00 WHEELCON    control. VERIFIED as a sequence, UNDETERMINED bit by bit
  *   +0x04 WHEELGO     bit 0 starts the transfer queued in WHEELTX. VERIFIED
