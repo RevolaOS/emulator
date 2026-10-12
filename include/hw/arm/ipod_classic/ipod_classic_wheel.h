@@ -243,50 +243,53 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicWheelState, IPOD_CLASSIC_WHEEL)
 #define S5L8702_WHEEL_UNTOUCH_MS    1500
 
 /*
- * BUTTONS ARE REPEATED, and this is the same constraint 2 as above, applied to
- * the half of the wheel that used to be exempt from it.
+ * INPUT IS AN ORDERED QUEUE, PAID OUT ONE PACKET AT A TIME TO A GUEST THAT HAS
+ * KEPT UP, and this is constraint 2 above applied to the whole device.
  *
- * A press used to be exactly two packets: one with the bit set, one with it
- * clear. The retailOS acts on the RELEASE -- its rules are called
- * "button.menu.up" and "button.select.up" -- so it needs the wheel task to run
- * and see the bit SET, and then run again and see it CLEAR. Miss either and
- * the whole press is gone. And the ISR overwrites the same state block on
- * every packet, so a task that does not run between the two never sees the
- * press at all.
+ * The retailOS acts on the RELEASE of a button ("button.select.up",
+ * "button.menu.up"), so its wheel task has to run and see the bit SET, and
+ * then run again and see it CLEAR. The ISR overwrites one state block on every
+ * packet, so any packet the task has not yet looked at is destroyed by the
+ * next one. A model that keeps the button state as a LEVEL ("is it down right
+ * now?") and re-sends it for a while loses exactly the presses whose down and
+ * up edges arrive without the guest running in between: two presses of the
+ * same button at zero gap (sendkey releases and re-presses in the same
+ * instant) merge into one, 9 of 10 seen. Measured on the guest, not the
+ * screen: key_dispatch (0x08056900) hit counts against presses sent.
  *
- * MEASURED, five SELECT/MENU round trips into the Music screen and back, one
- * press every 13 s, with the model reporting every packet queued and none
- * dropped. Counting only presses that had somewhere to go:
+ * So there is no level and no repeat window. Every wheel step and every
+ * button edge is an entry in one FIFO, in the order the keys arrived, and the
+ * tick sends the head only when the guest has taken and processed the
+ * previous packet:
  *
- *              SELECT from the main menu     MENU out of Music
- *   one shot         1 of 3                       2 of 3
- *   repeated         5 of 10                      5 of 5
+ *   - the ISR ran: WHEELRX was read and the state block holds the packet's
+ *     decoded words (reading WHEELRX alone is not enough: the ISR pops it
+ *     BEFORE it stores, and a timer can fire in between), and
+ *   - the wheel task has finished with it. That is observable in guest RAM,
+ *     in the state block at S5L8702_WHEEL_STATE_BLOCK: the ISR stores the new
+ *     button word at +0x20 and the new position word at +0x24, the task copies
+ *     them to +0x18 (key_edge_detector, 0x08074440) and +0x1c
+ *     (wheel_scroll_consumer, 0x08093718) when it is done. Both pairs equal
+ *     means the task is idle.
  *
- * So the state is repeated one packet per tick while a button is held, and for
- * a while after the release so that the UP edge gets the same treatment.
- * Tunable with IPOD_WHEEL_BTN_REPEAT_MS; 400 ms is ten ticks, and a monitor
- * "sendkey ret 150" therefore lands about four DOWN packets and ten UP ones.
+ * A button edge additionally waits S5L8702_WHEEL_BTN_DWELL_MS after the
+ * previous edge, so a DOWN and its UP are never the same instant even if the
+ * guest is faster than a tick. If the guest does not acknowledge within
+ * S5L8702_WHEEL_ACK_TIMEOUT_MS the packet is sent anyway and the ack_timeouts
+ * counter says so (WHEELTRACE). A firmware that does not keep that block
+ * there reads as equal zeros, i.e. always idle, and costs nothing.
  *
- * 400 MS IS NOT A FACT ABOUT THE HARDWARE. It is a model choice, and it is
- * held to the same standard as the two constants above: the real wheel's
- * reporting rate is UNDETERMINED and so is whether it keeps reporting after a
- * button comes back up. What IS known is only that the state of every button
- * travels in every packet the wheel sends (button-clickwheel.c:273 decodes all
- * five bits out of one status word), so repeating the state is at worst
- * harmless and at best exactly what the part does. The window was picked long
- * enough that the guest's wheel task cannot miss both edges and short enough
- * that it is over before the next keystroke; the measurement it bought is the
- * MENU column of the table above, and nothing here claims more than that.
- *
- * AND IT IS NOT THE WHOLE STORY, which is why the table above is printed with
- * its bad column: SELECT is still lost about half the time and this did not
- * change that, so the loss has a second cause that has NOT been found. The
- * suspect and the experiment are written down in wiki/11 s.18.8; the short
- * version is that the key dispatcher reads the PMU hold switch over I2C on
- * every single key and returns without doing anything if the answer is not
- * zero. Do not read this repeat as "input is fixed".
+ * Neither number is a fact about the hardware; the real wheel streams on its
+ * own clock and the UNDETERMINED rate is the same one as above.
  */
-#define S5L8702_WHEEL_BTN_REPEAT_MS 400
+#define S5L8702_WHEEL_BTN_DWELL_MS      80
+#define S5L8702_WHEEL_ACK_TIMEOUT_MS    1000
+#define S5L8702_WHEEL_STATE_BLOCK       0x089d2b8c
+
+/* Queued inputs; ~2 s of 0-gap keystrokes at one step per tick. */
+#define S5L8702_WHEEL_EVQ_LEN       64
+/* An evq entry >= this is a button edge; anything below is a signed step count. */
+#define S5L8702_WHEEL_EVQ_EDGE      0x70000000
 
 /*
  * Deep enough that a burst of keystrokes cannot overrun it, shallow enough
@@ -324,23 +327,28 @@ struct IPodClassicWheelState {
      * move, or the firmware throws the movement away.
      */
     bool armed;
-    int32_t pending_steps;  /* positions still owed to the guest, signed */
     int64_t untouch_at;     /* virtual ns at which the finger comes off */
-    /*
-     * Virtual ns until which the button state keeps being REPEATED, one packet
-     * per tick, instead of being sent once and forgotten. See
-     * S5L8702_WHEEL_BTN_REPEAT_MS: without it a whole press can vanish.
-     */
-    int64_t button_repeat_until;
 
-    /* What the last packet we sent said, so we do not repeat ourselves. */
-    uint32_t sent_buttons;
+    /*
+     * Inputs not yet shown to the guest, oldest first: a signed count of
+     * wheel positions still owed, or a button edge (EVQ_EDGE | pressed << 8 |
+     * button bit). Consecutive steps of one direction share an entry.
+     */
+    int32_t evq[S5L8702_WHEEL_EVQ_LEN];
+    unsigned evq_head;
+    unsigned evq_len;
+    int64_t btn_hold_until; /* no button edge before this virtual ns */
+    int64_t ack_deadline;   /* send regardless after this virtual ns */
+    uint32_t last_block[4]; /* the state block words read last (WHEELTRACE only) */
+    uint32_t last_packet;   /* the event packet sent last, 0 before the first */
 
     QEMUTimer *tick;
     uint32_t key_step;
     int64_t tick_ns;
     int64_t untouch_ns;
-    int64_t button_repeat_ns;
+    int64_t btn_dwell_ns;
+    int64_t ack_timeout_ns;
+    uint32_t state_block;   /* guest address of the wheel state block, 0 = no ack */
     bool irq_level;
 
     /*

@@ -21,6 +21,9 @@
  *    both before the wheel task runs once, in which case the task sees only
  *    the second, decides it is a first touch, and throws the movement away.
  *
+ * WHEELTRACE=2 additionally logs every key event, queued button edge and
+ * packet with its virtual time.
+ *
  * WHEELTRACE=1 announces the first command, the first packet and the first
  * time the line is raised, and prints totals at exit -- announcing the first
  * of each rather than every one, because stderr is where the firmware's own
@@ -51,25 +54,29 @@ static uint64_t wheel_packets;      /* event and reply words queued */
 static uint64_t wheel_dropped;      /* words lost because the FIFO was full */
 static uint64_t wheel_commands;     /* WHEELGO kicks */
 static uint64_t wheel_irq_raises;   /* rising edges on IRQ 23 */
+static uint64_t wheel_ack_timeouts; /* packets sent before the guest task was idle */
+static uint64_t wheel_overflows;    /* inputs lost because the event queue was full */
 
 static bool wheel_trace_on(void)
 {
     if (wheeltrace < 0) {
         const char *e = getenv("WHEELTRACE");
-        wheeltrace = (e && *e && *e != '0') ? 1 : 0;
+        wheeltrace = (e && *e && *e != '0') ? atoi(e) : 0;
         if (wheeltrace) {
             atexit(wheel_trace_totals);
         }
     }
-    return wheeltrace == 1;
+    return wheeltrace >= 1;
 }
 
 static void wheel_trace_totals(void)
 {
     fprintf(stderr, "WHEELTRACE totals: %" PRIu64 " packets queued, %" PRIu64
             " dropped with the FIFO full, %" PRIu64 " commands, %" PRIu64
-            " rising edges on IRQ 23\n", wheel_packets, wheel_dropped,
-            wheel_commands, wheel_irq_raises);
+            " rising edges on IRQ 23, %" PRIu64 " sent before the guest task was idle, %"
+            PRIu64 " inputs lost with the queue full\n", wheel_packets,
+            wheel_dropped, wheel_commands, wheel_irq_raises,
+            wheel_ack_timeouts, wheel_overflows);
 }
 
 /* ------------------------------------------------------------------ */
@@ -162,8 +169,13 @@ static uint32_t wheel_event_packet(IPodClassicWheelState *s)
 
 static void wheel_send_event(IPodClassicWheelState *s)
 {
-    wheel_fifo_push(s, wheel_event_packet(s));
-    s->sent_buttons = s->buttons;
+    if (wheel_trace_on() && wheeltrace >= 2) {
+        fprintf(stderr, "WHEELTRACE %" PRId64 " ms: packet 0x%08x\n",
+                qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL), wheel_event_packet(s));
+    }
+    s->last_packet = wheel_event_packet(s);
+    wheel_fifo_push(s, s->last_packet);
+    s->ack_deadline = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->ack_timeout_ns;
 }
 
 /*
@@ -244,20 +256,95 @@ static void wheel_kick(IPodClassicWheelState *s)
     timer_mod(s->tick, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->tick_ns);
 }
 
+/*
+ * Has the guest taken the last packet and finished with it? The ISR read it
+ * (the FIFO is empty) and the wheel task copied the state block's new words
+ * to its old ones. See "INPUT IS AN ORDERED QUEUE" in the header.
+ */
+static bool wheel_guest_idle(IPodClassicWheelState *s)
+{
+    uint32_t w[4];      /* +0x18 old buttons, +0x1c old position, +0x20, +0x24 new */
+
+    if (!wheel_fifo_empty(s)) {
+        return false;
+    }
+    if (!s->state_block) {
+        return true;
+    }
+    cpu_physical_memory_read(s->state_block + 0x18, w, sizeof(w));
+    memcpy(s->last_block, w, sizeof(w));
+    if (s->last_packet) {
+        /*
+         * The ISR pops WHEELRX BEFORE it stores the decoded words, and a
+         * timer can fire in between (the FIFO is empty and old == new, both
+         * still the previous packet's). Without this the next packet goes out
+         * at once and the ISR takes both before the task runs: the arming
+         * packet of a gesture is merged with the first step, or a button's
+         * down with its up. Wait until the block holds THIS packet.
+         */
+        uint32_t p = s->last_packet;
+        uint32_t buttons = (p >> S5L8702_WHEEL_BTN_SHIFT) & 0x1f;
+        uint32_t position = (p & S5L8702_WHEEL_DOWN)
+            ? S5L8702_WHEEL_DOWN
+              | ((p >> S5L8702_WHEEL_POS_SHIFT) & S5L8702_WHEEL_POS_MASK)
+            : 0;
+
+        if (w[2] != buttons || w[3] != position) {
+            return false;
+        }
+    }
+    return w[0] == w[2] && w[1] == w[3];
+}
+
+static void wheel_evq_push(IPodClassicWheelState *s, int32_t entry)
+{
+    unsigned tail = (s->evq_head + s->evq_len) % S5L8702_WHEEL_EVQ_LEN;
+
+    if (s->evq_len && entry < S5L8702_WHEEL_EVQ_EDGE) {
+        int32_t *last = &s->evq[(tail + S5L8702_WHEEL_EVQ_LEN - 1)
+                                % S5L8702_WHEEL_EVQ_LEN];
+        if (*last < S5L8702_WHEEL_EVQ_EDGE && (*last < 0) == (entry < 0)) {
+            *last += entry;     /* same direction: one entry, paid in key_step pieces */
+            return;
+        }
+    }
+    if (s->evq_len == S5L8702_WHEEL_EVQ_LEN) {
+        wheel_overflows++;
+        return;
+    }
+    s->evq[tail] = entry;
+    s->evq_len++;
+}
+
+static void wheel_evq_pop(IPodClassicWheelState *s)
+{
+    s->evq_head = (s->evq_head + 1) % S5L8702_WHEEL_EVQ_LEN;
+    s->evq_len--;
+}
+
 static void wheel_tick(void *opaque)
 {
     IPodClassicWheelState *s = opaque;
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    bool busy;
 
     /*
-     * If the guest has not drained what it already has, do not add to it.
-     * Half the FIFO is the back-off point: it keeps a burst of keystrokes
-     * from turning into a dropped-packet count that hides the real problem.
+     * One packet at a time, and only to a guest that has finished with the
+     * previous one. Past the deadline it is sent anyway: a stuck guest must
+     * not freeze input for ever, and the counter says it happened.
      */
-    if (s->fifo_len >= S5L8702_WHEEL_FIFO_LEN / 2) {
-        wheel_kick(s);
-        return;
+    if (!wheel_guest_idle(s)) {
+        if (now < s->ack_deadline) {
+            wheel_kick(s);
+            return;
+        }
+        wheel_ack_timeouts++;
+        if (wheel_trace_on()) {
+            fprintf(stderr, "WHEELTRACE %" PRId64 " ms: ack timeout, last packet "
+                    "0x%08x, fifo %u, block +18..+24 %08x %08x %08x %08x\n",
+                    qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL), s->last_packet,
+                    s->fifo_len, s->last_block[0], s->last_block[1],
+                    s->last_block[2], s->last_block[3]);
+        }
     }
 
     if (s->touched && !s->armed) {
@@ -268,8 +355,23 @@ static void wheel_tick(void *opaque)
          */
         s->armed = true;
         wheel_send_event(s);
-    } else if (s->pending_steps != 0) {
-        int32_t step = s->pending_steps;
+    } else if (s->evq_len && s->evq[s->evq_head] >= S5L8702_WHEEL_EVQ_EDGE) {
+        int32_t edge = s->evq[s->evq_head];
+        uint32_t bit = edge & 0xff;
+
+        if (now >= s->btn_hold_until) {
+            if (edge & 0x100) {
+                s->buttons |= bit;
+            } else {
+                s->buttons &= ~bit;
+            }
+            wheel_evq_pop(s);
+            s->btn_hold_until = now + s->btn_dwell_ns;
+            wheel_send_event(s);
+        }
+    } else if (s->evq_len) {
+        int32_t *head = &s->evq[s->evq_head];
+        int32_t step = *head;
 
         if (step > (int32_t)s->key_step) {
             step = s->key_step;
@@ -278,7 +380,11 @@ static void wheel_tick(void *opaque)
         }
         s->position = (s->position + step + S5L8702_WHEEL_POSITIONS)
                       % S5L8702_WHEEL_POSITIONS;
-        s->pending_steps -= step;
+        *head -= step;
+        if (*head == 0) {
+            wheel_evq_pop(s);
+        }
+        s->untouch_at = now + s->untouch_ns;
         wheel_send_event(s);
     } else if (s->touched && now >= s->untouch_at) {
         /*
@@ -290,23 +396,9 @@ static void wheel_tick(void *opaque)
         s->touched = false;
         s->armed = false;
         wheel_send_event(s);
-    } else if (s->buttons != s->sent_buttons
-               || now < s->button_repeat_until) {
-        /*
-         * The button state is REPEATED for a while, not sent once. A real
-         * wheel streams, so the current state of every button is in every
-         * packet it sends; ours used to emit exactly one packet per edge, and
-         * a guest task that did not happen to run between the down packet and
-         * the up packet lost the whole press. See S5L8702_WHEEL_BTN_REPEAT_MS
-         * in the header for the measurement, and for what it did NOT fix.
-         */
-        wheel_send_event(s);
     }
 
-    busy = s->touched || s->pending_steps != 0
-           || s->buttons != s->sent_buttons
-           || now < s->button_repeat_until;
-    if (busy) {
+    if (s->touched || s->evq_len) {
         wheel_kick(s);
     }
 }
@@ -339,26 +431,38 @@ static void wheel_tick(void *opaque)
 /* Owe the guest `steps` wheel positions (signed: + is clockwise). */
 static void wheel_turn(IPodClassicWheelState *s, int32_t steps)
 {
-    s->pending_steps += steps;
+    wheel_evq_push(s, steps);
     s->touched = true;
     s->untouch_at = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->untouch_ns;
     wheel_kick(s);
 }
 
+/*
+ * A button edge, queued behind everything that arrived before it. An edge
+ * that would not change the button's state once the queue has drained (a
+ * repeated key-down from the host) is dropped.
+ */
 static void wheel_button(IPodClassicWheelState *s, uint32_t bit, bool pressed)
 {
-    if (pressed) {
-        s->buttons |= bit;
-    } else {
-        s->buttons &= ~bit;
+    bool state = s->buttons & bit;
+
+    for (unsigned i = 0; i < s->evq_len; i++) {
+        int32_t e = s->evq[(s->evq_head + i) % S5L8702_WHEEL_EVQ_LEN];
+
+        if (e >= S5L8702_WHEEL_EVQ_EDGE && (e & 0xff) == bit) {
+            state = e & 0x100;
+        }
     }
-    /*
-     * Both edges start the repeat window, because the retailOS acts on the
-     * UP one and needs to see it as clearly as the DOWN one.
-     */
-    s->button_repeat_until = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)
-                           + s->button_repeat_ns;
-    wheel_kick(s);
+    if (wheel_trace_on() && wheeltrace >= 2) {
+        fprintf(stderr, "WHEELTRACE %" PRId64 " ms: button 0x%x %s %s (queue %u)\n",
+                qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL), bit,
+                pressed ? "down" : "up", state != pressed ? "queued" : "ignored",
+                s->evq_len);
+    }
+    if (state != pressed) {
+        wheel_evq_push(s, S5L8702_WHEEL_EVQ_EDGE | (pressed ? 0x100 : 0) | bit);
+        wheel_kick(s);
+    }
 }
 
 /*
@@ -392,6 +496,11 @@ static void wheel_key_event(void *opaque, int keycode)
     IPodClassicWheelState *s = opaque;
     bool released = (keycode & 0x80) != 0;
     uint32_t bit;
+
+    if (wheel_trace_on() && wheeltrace >= 2) {
+        fprintf(stderr, "WHEELTRACE %" PRId64 " ms: key 0x%02x\n",
+                qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL), keycode);
+    }
 
     /*
      * Tee every keycode to the HLE Now Playing overlay's control handler first
@@ -555,10 +664,12 @@ static void ipod_classic_wheel_reset(DeviceState *dev)
     s->buttons = 0;
     s->touched = false;
     s->armed = false;
-    s->pending_steps = 0;
     s->untouch_at = 0;
-    s->button_repeat_until = 0;
-    s->sent_buttons = 0;
+    s->evq_head = 0;
+    s->evq_len = 0;
+    s->btn_hold_until = 0;
+    s->ack_deadline = 0;
+    s->last_packet = 0;
     s->irq_level = false;
     timer_del(s->tick);
     qemu_set_irq(s->irq, 0);
@@ -573,7 +684,7 @@ static int wheel_env_int(const char *name, int def, int lo, int hi)
     if (!v || !*v) {
         return def;
     }
-    n = atoi(v);
+    n = (int)strtol(v, NULL, 0);
     if (n < lo) {
         n = lo;
     }
@@ -610,9 +721,15 @@ static void ipod_classic_wheel_realize(DeviceState *dev, Error **errp)
     s->untouch_ns = 1000000LL * wheel_env_int("IPOD_WHEEL_UNTOUCH_MS",
                                               S5L8702_WHEEL_UNTOUCH_MS,
                                               10, 60000);
-    s->button_repeat_ns = 1000000LL * wheel_env_int("IPOD_WHEEL_BTN_REPEAT_MS",
-                                                    S5L8702_WHEEL_BTN_REPEAT_MS,
-                                                    0, 5000);
+    s->btn_dwell_ns = 1000000LL * wheel_env_int("IPOD_WHEEL_BTN_DWELL_MS",
+                                                S5L8702_WHEEL_BTN_DWELL_MS,
+                                                0, 5000);
+    s->ack_timeout_ns = 1000000LL * wheel_env_int("IPOD_WHEEL_ACK_TIMEOUT_MS",
+                                                  S5L8702_WHEEL_ACK_TIMEOUT_MS,
+                                                  0, 60000);
+    /* 0 turns the acknowledgement off (the firmware is not the retailOS). */
+    s->state_block = wheel_env_int("IPOD_WHEEL_STATE_BLOCK",
+                                   S5L8702_WHEEL_STATE_BLOCK, 0, INT_MAX);
 
     s->tick = timer_new_ns(QEMU_CLOCK_VIRTUAL, wheel_tick, s);
     qemu_add_kbd_event_handler(wheel_key_event, s);
@@ -639,11 +756,12 @@ static int wheel_post_load(void *opaque, int version_id)
 static const VMStateDescription vmstate_ipod_classic_wheel = {
     .name = TYPE_IPOD_CLASSIC_WHEEL,
     /*
-     * Bumped to 2 when button_repeat_until joined the field list. Nothing
-     * migrates this machine today, so the old format is not kept alive.
+     * Bumped to 3 when the ordered event queue replaced pending_steps and the
+     * button repeat window. Nothing migrates this machine today, so the old
+     * format is not kept alive.
      */
-    .version_id = 2,
-    .minimum_version_id = 2,
+    .version_id = 3,
+    .minimum_version_id = 3,
     .post_load = wheel_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(con, IPodClassicWheelState),
@@ -658,12 +776,16 @@ static const VMStateDescription vmstate_ipod_classic_wheel = {
         VMSTATE_UINT32(fifo_len, IPodClassicWheelState),
         VMSTATE_UINT32(position, IPodClassicWheelState),
         VMSTATE_UINT32(buttons, IPodClassicWheelState),
-        VMSTATE_UINT32(sent_buttons, IPodClassicWheelState),
         VMSTATE_BOOL(touched, IPodClassicWheelState),
         VMSTATE_BOOL(armed, IPodClassicWheelState),
-        VMSTATE_INT32(pending_steps, IPodClassicWheelState),
         VMSTATE_INT64(untouch_at, IPodClassicWheelState),
-        VMSTATE_INT64(button_repeat_until, IPodClassicWheelState),
+        VMSTATE_INT32_ARRAY(evq, IPodClassicWheelState,
+                            S5L8702_WHEEL_EVQ_LEN),
+        VMSTATE_UINT32(evq_head, IPodClassicWheelState),
+        VMSTATE_UINT32(evq_len, IPodClassicWheelState),
+        VMSTATE_INT64(btn_hold_until, IPodClassicWheelState),
+        VMSTATE_INT64(ack_deadline, IPodClassicWheelState),
+        VMSTATE_UINT32(last_packet, IPodClassicWheelState),
         VMSTATE_TIMER_PTR(tick, IPodClassicWheelState),
         VMSTATE_END_OF_LIST()
     },
