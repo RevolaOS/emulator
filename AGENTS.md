@@ -1,0 +1,36 @@
+# Local iPod test runs
+
+Read this file even when launching QEMU from a firmware worktree or a sibling
+workspace directory. Follow [the RepriseOS UI test procedure](docs/repriseos-testing.md)
+before concluding that input or navigation is broken. Older sibling launchers may
+omit the required configuration below.
+
+Start iPod Classic and RepriseOS test VMs with the complete playback configuration
+in [README.md](README.md#running-the-music-player), unless the test specifically
+needs a bare hardware baseline:
+
+```sh
+IRAMSPILL=0x10000 SHA1_ZERO=1 SM1_IRQ=1 \
+SM1_SLOTS=1 SM1_NSLOTS=2 SM1_DECODE=1 SM1_FEED_OFF=1 \
+DISP_ALPHA=1 PMUCHARGER=adapter \
+HLE_AUDIO_DATAPATH=1 HLE_AUDIO_SUSTAIN=1 \
+HLE_AUDIO_DISK="$reprise_disk" AUDIOWAV="$reprise_run/audio.wav" \
+python3 "$reprise_launcher" --headless
+```
+
+Set the three `reprise_*` paths for the run first. `HLE_AUDIO_DISK` must be the
+same absolute disk-image path passed to QEMU's `-drive`. Preserve the launcher's
+RepriseOS payload loader, use `-snapshot`, and keep a separate QMP socket and log
+for each VM. Do not replace `SHA1_ZERO` with `SHA1_OFF`: the latter disables the
+SHA device and is only for deliberate compatibility experiments.
+
+Capture audio through `AUDIOWAV`; a running VM or a decoded-track log does not
+prove audible output. Verify non-silent samples and inspect the real Now Playing
+screen. Do not use `HLE_NP_OVERLAY` for firmware UI verification. Check a screenshot
+after each important input because Select/Menu presses can be dropped.
+
+The playback settings are emulator workarounds, not hardware acceptance. Report
+elapsed-time, pause/resume, track-change, seek and bookmark limitations honestly.
+See [the playback investigation](wiki/20-classic6g-reproductor.md) before changing
+the configuration. Keep VM files out of git and never install firmware on hardware
+as part of an emulator test.
