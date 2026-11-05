@@ -211,7 +211,10 @@
 #define S5L8702_SYSINFO_HW_ID_OFF     0x84
 #define S5L8702_SYSINFO_DRAM_SIZE_OFF 0xe0
 #define S5L8702_SYSINFO_DRAM_BASE_OFF 0xe4
-#define S5L8702_HW_ID                 0x00130000
+#define S5L8702_SYSINFO_LOADER_VER_OFF 0x11c
+/* RepriseOS companion loader sysinfo for Apple 2.0.5 (firmware/apple.json). */
+#define S5L8702_HW_ID                 0x00130300
+#define S5L8702_LOADER_VERSION        0x01808003
 
 typedef struct {
     MachineClass parent;

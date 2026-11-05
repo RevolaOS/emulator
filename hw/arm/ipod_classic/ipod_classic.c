@@ -78,9 +78,10 @@ static void ipod_classic_cpu_setup(MachineState *machine, MemoryRegion **sysmem,
 static void ipod_classic_write_bootinfo(IPodClassicMachineState *nms)
 {
     uint32_t sysinfo[S5L8702_SYSINFO_SIZE / 4] = {
-        [S5L8702_SYSINFO_HW_ID_OFF / 4]     = cpu_to_le32(S5L8702_HW_ID),
-        [S5L8702_SYSINFO_DRAM_SIZE_OFF / 4] = cpu_to_le32(SDRAM_MEM_SIZE),
-        [S5L8702_SYSINFO_DRAM_BASE_OFF / 4] = cpu_to_le32(SDRAM_MEM_BASE),
+        [S5L8702_SYSINFO_HW_ID_OFF / 4]      = cpu_to_le32(S5L8702_HW_ID),
+        [S5L8702_SYSINFO_DRAM_SIZE_OFF / 4]  = cpu_to_le32(SDRAM_MEM_SIZE),
+        [S5L8702_SYSINFO_DRAM_BASE_OFF / 4]  = cpu_to_le32(SDRAM_MEM_BASE),
+        [S5L8702_SYSINFO_LOADER_VER_OFF / 4] = cpu_to_le32(S5L8702_LOADER_VERSION),
     };
     uint32_t tag = cpu_to_le32(S5L8702_SYSINFO_MAGIC);
     uint32_t ptr = cpu_to_le32(S5L8702_SYSINFO_BASE);
