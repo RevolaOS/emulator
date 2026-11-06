@@ -138,6 +138,27 @@ A cold build takes about **16 minutes**. A no-op `ninja` takes ~20 s warm, but c
 **6 minutes** the first time after touching files from Windows — that is the 9p cache
 on `/mnt/c`, not a broken build.
 
+### macOS (Apple silicon)
+
+```bash
+brew install glib pixman sdl2 ninja pkg-config openssl@3 python@3.13 mtools
+/opt/homebrew/bin/python3.13 -m venv .venv
+.venv/bin/python -m pip install distlib       # configure fails without it
+mkdir -p build && cd build
+../configure --python=../.venv/bin/python --enable-sdl --disable-cocoa \
+             --disable-coreaudio --disable-vmnet --target-list=arm-softmmu \
+             --disable-capstone --disable-slirp --disable-werror --disable-docs \
+             --extra-cflags=-I/opt/homebrew/opt/openssl@3/include \
+             --extra-ldflags='-L/opt/homebrew/opt/openssl@3/lib -lcrypto'
+ninja qemu-system-arm
+make -C contrib/plugins                       # TCG plugins, incl. funcprof
+```
+
+`--disable-cocoa` selects the SDL window. CoreAudio and vmnet must then be
+disabled too: they need Objective-C, which configure no longer sets up. The
+build produces a native macOS binary. RepriseOS VMs are launched and driven
+with [`tools/ipodvm`](tools/ipodvm/README.md).
+
 ---
 
 ## Running the iPod Classic 6G

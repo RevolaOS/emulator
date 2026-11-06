@@ -19,6 +19,10 @@ settings is not the established feature-test setup.
 
 ## Drive the UI
 
+[`tools/ipodvm`](../tools/ipodvm/README.md) implements the steps below:
+`launch` waits for the first stable screen, `key` resumes, sends, waits and
+pauses, and `select`/`menu` verify the frame changed before a guarded retry.
+
 1. Let the VM run until a screenshot shows Language or the main menu. Startup
    can take roughly 60 seconds; a black frame at 20 or 30 seconds is not failure.
    If QMP reports the VM paused, send `cont` before waiting.
