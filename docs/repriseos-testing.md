@@ -48,17 +48,19 @@ sequence based on an unverified selection.
 
 ## If navigation appears stuck
 
-Compare the environment, disk, payload loader and input timing with a successful
-run before attributing the failure to firmware or declaring emulation unusable.
-On 2026-11-05, a theme check using the older sibling `ipod-emulator-test/run.py`
-configuration stalled at Language. The rebuilt firmware reached the main menu
-with the recent feature-test configuration and resume/input/pause controller.
-This comparison changed several settings together; it does not isolate a single
-causal flag.
+Compare the environment, disk, payload loader and input timing with the
+configuration above before attributing a failure to firmware or declaring
+emulation unusable. A launcher without the complete configuration can stall at
+the Language screen.
 
-The local `/tmp/ipod-progress-vm/launch.py` and `remote.py` were the working
-reference for that run. Temporary paths are evidence, not durable dependencies;
-reconstruct them from the configuration and procedure above if they are gone.
+- A paused guest gets no run time. Slow screens (Settings, artwork loads) need
+  20–30 s of running guest time (`ipodvm wait` or `ipodvm run N`).
+- The idle Charging screen wakes on any key. After about two minutes of idle
+  guest time the firmware sleeps and ignores input; `ipodvm status` reports it
+  (PC in the IRAM sleep loop, LR = 0). Relaunch the VM.
+- Theme packs built for another catalog are rejected and the Theme menu is
+  hidden. Build the disk with packs from the same firmware build
+  (`ipodvm disk`).
 
 ## Limits
 
