@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Launch, drive, read, navigate and profile emulated iPod Classic VMs.
+
+`launch` boots a RepriseOS CFW image (body plus appended payload); the other
+commands work with whatever firmware the VM runs. Each VM lives in
+/tmp/ipodvm/<name>/. Every command is a one-shot QMP client; there is no
+interactive control shell. Add --json for machine-readable output.
+See README.md next to this file.
+"""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import core  # noqa: E402
+import screen  # noqa: E402
+
+
+def show_screen(data):
+    title = data.get('title') or '(no title)'
+    print(f'{title}  [{data["state"]}]')
+    for row in data.get('rows', []):
+        mark = '>' if row.get('selected') else ' '
+        text = row['label']
+        if row.get('value'):
+            text += f' = {row["value"]}'
+        if row.get('submenu'):
+            text += '  ›'
+        if row.get('detail'):
+            text += f'  ({row["detail"]})'
+        print(f' {mark} {text}')
+    if data.get('text'):
+        print('  ' + ' | '.join(data['text']))
+    if data.get('preview'):
+        print(f'  preview: {" | ".join(data["preview"])}')
+    if data.get('warning'):
+        print(f'  warning: {data["warning"]}')
+    print(f'  shot: {data["shot"]}')
+
+
+def show_profile(data, top):
+    total = data['insns'] or 1
+    print(f'{data["insns"]:,} guest instructions recorded over '
+          f'{data["host_ns"] / 1e9:.1f} s host time')
+    print(f'{"function":36} {"calls":>8} {"incl insns":>14} {"%":>6} {"self insns":>14} '
+          f'{"avg":>11} {"max":>11} {"host ms":>9}')
+    for f in data['functions'][:top]:
+        avg = f['incl'] // f['calls'] if f['calls'] else 0
+        note = f'  ({f["unclosed"]} unclosed)' if f['unclosed'] else ''
+        print(f'{f["name"][:36]:36} {f["calls"]:>8,} {f["incl"]:>14,} '
+              f'{100 * f["incl"] / total:>5.1f}% {f["self"]:>14,} {avg:>11,} '
+              f'{f["max"]:>11,} {f["host_ns"] / 1e6:>9.1f}{note}')
+    print('incl counts watched and unwatched callees; self excludes watched callees only, '
+          'so stock code a hook calls is part of its self')
+    if data.get('events_dropped'):
+        print(f'warning: {data["events_dropped"]:,} trace events dropped (tracecap)')
+    print(f'summary {data["summary"]}')
+    if data.get('trace'):
+        print(f'trace   {data["trace"]}  (open in https://ui.perfetto.dev)')
+    if data.get('shot'):
+        print(f'shot    {data["shot"]}')
+
+
+def show(command, data, args):
+    if args.json:
+        print(json.dumps(data, indent=2))
+    elif command in ('screen',):
+        show_screen(data)
+    elif command == 'goto':
+        for step in data['steps']:
+            print(f'  {step}')
+        show_screen(data)
+    elif command == 'profile' and 'functions' in data:
+        show_profile(data, args.top)
+    elif command == 'list':
+        for vm in data:
+            state = f'running pid {vm["pid"]}' if vm['running'] else 'stopped'
+            print(f'{vm["name"]:16} {state:18} {vm["title"]}')
+    elif command == 'hmp':
+        print(data, end='')
+    elif command == 'status':
+        print(f'{data["name"]}: {data["state"]}  pid {data["pid"]}  PC={data["pc"]} LR={data["lr"]}')
+        print(f'  title    {data["title"]}')
+        print(f'  firmware {data["firmware"]["path"]} ({data["firmware"]["sha256"][:12]})')
+        if data.get('profile'):
+            print(f'  profiling {data["profile"]["functions"]} functions')
+        if data.get('warning'):
+            print(f'  warning: {data["warning"]}')
+    else:
+        for key, value in data.items():
+            if value is not None:
+                print(f'{key}: {value}')
+
+
+def main():
+    parser = argparse.ArgumentParser(prog='ipodvm', description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--json', action='store_true', help='print results as JSON')
+    sub = parser.add_subparsers(dest='command', required=True)
+
+    def named(name, help_text):
+        p = sub.add_parser(name, help=help_text, description=help_text)
+        p.add_argument('-n', '--name', default='vm', help='VM name (default: vm)')
+        p.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
+                       help='print results as JSON')
+        return p
+
+    p = named('launch', 'boot a RepriseOS CFW image with the complete feature-test configuration')
+    p.add_argument('--firmware', required=True, help='osos-cfw.bin under test')
+    p.add_argument('--disk', required=True, help='test disk image (cloned, never modified)')
+    p.add_argument('--layout', help='payload/native/layout.h (default: found from cwd)')
+    p.add_argument('--title', help='window title (default: name · repo (branch) · session)')
+    p.add_argument('--headless', action='store_true',
+                   help='no window (default: SDL window that also accepts keys)')
+    p.add_argument('--run', action='store_true', help='keep running after boot instead of pausing')
+    p.add_argument('--no-wait', action='store_true', help='return without waiting for boot')
+    p.add_argument('--boot-timeout', type=int, default=180)
+    p.add_argument('--elf', help='payload.elf matching --firmware, for --profile')
+    p.add_argument('--profile', nargs='*', metavar='GLOB',
+                   help='profile payload functions matching GLOBs (none = all); needs --elf')
+    p.add_argument('--fn', action='append', metavar='0xADDR:NAME',
+                   help='also profile a stock-firmware function (repeatable)')
+    p.add_argument('--trace', action='store_true', help='record per-call events for Perfetto')
+    p.add_argument('--timeline', choices=['host', 'insns'], help='trace time axis (default host)')
+    p.add_argument('--signpost', action='store_true', help='emit os_signposts for Instruments')
+    p.set_defaults(func=lambda a: core.launch(
+        a.name, a.firmware, a.disk, a.layout, a.title, a.headless, a.run, not a.no_wait,
+        a.boot_timeout, a.elf, a.profile, a.fn, a.trace, a.timeline, a.signpost))
+
+    p = sub.add_parser('disk', help='clone a test disk and install theme packs')
+    p.add_argument('--base', required=True, help='disk image to clone (never modified)')
+    p.add_argument('--out', required=True, help='new disk image')
+    p.add_argument('--themes', help='directory mirroring /themes (e.g. classic/default.bin)')
+    p.add_argument('--keep-themes', action='store_true',
+                   help='keep packs already on the base disk')
+    p.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
+    p.set_defaults(func=lambda a: core.prepare_disk(a.base, a.out, a.themes, not a.keep_themes))
+
+    p = named('screen', 'read the screen: title, rows, selected row, values')
+    p.set_defaults(func=lambda a: screen.screen(a.name))
+
+    p = named('goto', 'navigate by row names, e.g. "Settings/Theme" (from the main menu)')
+    p.add_argument('path', help='row labels separated by /')
+    p.add_argument('--here', action='store_true', help='start from the current screen')
+    p.set_defaults(func=lambda a: screen.goto(a.name, a.path, not a.here))
+
+    p = named('key', 'resume, send keys with settle waits, pause, screenshot')
+    p.add_argument('keys', nargs='+', help='ret w q e a d s, or select menu up down prev next play')
+    p.add_argument('--keep-running', action='store_true')
+    p.set_defaults(func=lambda a: core.key(a.name, a.keys, a.keep_running))
+
+    for which in ('select', 'menu'):
+        p = named(which, f'press {which.title()} and verify the screen changed, retrying safely')
+        p.add_argument('--attempts', type=int, default=3)
+        p.add_argument('--settle', type=float, default=25.0,
+                       help='extra guest run time before calling a press dropped')
+        p.add_argument('--region', metavar='X,Y,W,H',
+                       help='compare only this area (e.g. the title bar on animated screens)')
+        p.set_defaults(func=lambda a: core.button(
+            a.name, a.command, core.parse_region(a.region), a.attempts, a.settle))
+
+    p = named('shot', 'save a screenshot (default: next file in the run\'s shots/)')
+    p.add_argument('output', nargs='?')
+    p.set_defaults(func=lambda a: core.screenshot(a.name, a.output))
+
+    p = named('wait', 'run the guest until the screen changes or settles')
+    p.add_argument('--until', choices=['change', 'stable'], default='stable')
+    p.add_argument('--timeout', type=float, default=60)
+    p.add_argument('--interval', type=float, default=2)
+    p.add_argument('--region', metavar='X,Y,W,H')
+    p.add_argument('--keep-running', action='store_true')
+    p.set_defaults(func=lambda a: core.wait(
+        a.name, a.until, a.timeout, a.interval, core.parse_region(a.region), a.keep_running))
+
+    p = named('run', 'resume the guest (for N seconds, then pause, if given)')
+    p.add_argument('seconds', nargs='?', type=float)
+    p.set_defaults(func=lambda a: core.resume(a.name, a.seconds))
+    named('pause', 'pause the guest').set_defaults(func=lambda a: core.pause(a.name))
+    named('status', 'run state, PC/LR, sleep detection').set_defaults(
+        func=lambda a: core.status(a.name))
+    named('quit', 'stop the VM').set_defaults(func=lambda a: core.quit_vm(a.name))
+    p = named('hmp', 'run a raw HMP command (e.g. "info registers")')
+    p.add_argument('line', nargs='+')
+    p.set_defaults(func=lambda a: core.hmp(a.name, ' '.join(a.line)))
+    p = sub.add_parser('list', help='list VMs under /tmp/ipodvm')
+    p.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
+    p.set_defaults(func=lambda a: core.list_vms())
+
+    p = named('profile', 'control the function profiler')
+    p.add_argument('action', choices=['dump', 'reset', 'start', 'stop', 'keys'])
+    p.add_argument('keys', nargs='*', help='for `keys`: inputs to profile')
+    p.add_argument('--settle', type=float, default=0,
+                   help='for `keys`: extra run time after the last key before the dump')
+    p.add_argument('--top', type=int, default=25)
+    p.add_argument('--out', help='summary JSON path (default: run dir)')
+
+    def run_profile(a):
+        if a.action == 'keys':
+            if not a.keys:
+                raise core.Failure('profile keys needs at least one key')
+            return core.profile_keys(a.name, a.keys, a.settle, a.out)
+        if a.action == 'dump':
+            return core.profile_dump(a.name, a.out)
+        return core.profile_control(a.name, a.action)
+    p.set_defaults(func=run_profile)
+
+    p = named('instruments', 'record the QEMU process with xctrace and open it in Instruments')
+    p.add_argument('--template', default='Time Profiler')
+    p.add_argument('--time', type=int, help='record N seconds (default: until Ctrl-C)')
+    p.add_argument('--no-open', action='store_true')
+    p.add_argument('keys', nargs='*', help='inputs to send once recording has started')
+    p.set_defaults(func=lambda a: core.instruments(
+        a.name, a.template, a.time, a.keys, not a.no_open))
+
+    args = parser.parse_args()
+    try:
+        show(args.command, args.func(args), args)
+    except core.Failure as error:
+        print(f'ipodvm: {error}', file=sys.stderr)
+        raise SystemExit(1)
+
+
+if __name__ == '__main__':
+    main()
