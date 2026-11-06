@@ -54,7 +54,12 @@ TOOLS = [
                  'description': 'stock functions to profile, "0xADDR:NAME"'},
           'trace': {'type': 'boolean'},
           'timeline': {'type': 'string', 'enum': ['host', 'insns']},
-          'signpost': {'type': 'boolean'}},
+          'signpost': {'type': 'boolean'},
+          'heap': {'type': 'array', 'items': {'type': 'string'},
+                   'description': 'track heap allocations through hooks "0xADDR:KIND[:NAME]" '
+                   '([] = the stock 2.0.5 allocator)'},
+          'symbols': {'type': 'string', 'description': 'Ghidra functions.jsonl naming stock '
+                      'allocation sites'}},
          ['firmware', 'disk']),
     tool('disk_prepare', 'Clone a test disk and install theme packs from a directory that '
          'mirrors /themes (classic/default.bin, <id>/theme.bin, ...). Removes existing '
@@ -90,12 +95,14 @@ TOOLS = [
     tool('wait', 'Run the guest until the screen changes or two polls match.',
          {'name': NAME, 'until': {'type': 'string', 'enum': ['change', 'stable']},
           'timeout': {'type': 'number'}, 'image': IMAGE}),
-    tool('profile_keys', 'Reset the function profiler, send keys, dump: per-function calls '
-         'and guest instruction counts (VM must be launched with profiling).',
+    tool('profile_keys', 'Reset the profiler, send keys, dump: per-function calls and guest '
+         'instruction counts and, with heap hooks, the heap allocated, held and leaked by '
+         'that input (VM must be launched with profiling).',
          {'name': NAME, 'keys': KEYS, 'settle': {'type': 'number'},
-          'top': {'type': 'integer', 'description': 'functions to return (default 25)'}},
+          'top': {'type': 'integer', 'description': 'functions and heap sites to return (default 25)'}},
          ['keys']),
-    tool('profile_dump', 'Dump the profiler totals since the last reset.',
+    tool('profile_dump', 'Dump the profiler totals since the last reset (heap: current live '
+         'totals plus window statistics).',
          {'name': NAME, 'top': {'type': 'integer'}}),
     tool('profile_control', 'Queue a profiler reset, start or stop.',
          {'name': NAME, 'action': {'type': 'string', 'enum': ['reset', 'start', 'stop']}},
@@ -107,6 +114,8 @@ TOOLS = [
 
 def trim_profile(data, top):
     data = dict(data)
+    if 'heap' in data:
+        data['heap'] = core.heap_views(data, top or 25)
     data['functions'] = data['functions'][:top or 25]
     return data
 
@@ -123,7 +132,8 @@ def call(name, a):
                            keep_running=a.get('keep_running', False), elf=path('elf'),
                            profile=a.get('profile'), fns=a.get('fn'),
                            trace=a.get('trace', False), timeline=a.get('timeline'),
-                           signpost=a.get('signpost', False), cwd=str(repo))
+                           signpost=a.get('signpost', False), heap=a.get('heap'),
+                           symbols=path('symbols'), cwd=str(repo))
     if name == 'disk_prepare':
         return core.prepare_disk(a['base'], a['out'], a.get('themes'),
                                  not a.get('keep_themes', False))

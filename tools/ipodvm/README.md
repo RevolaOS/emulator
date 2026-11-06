@@ -25,6 +25,7 @@ any command for machine-readable output.
 | `screentext.swift` | Vision text recognition, compiled to `build/ipodvm/screentext` on first use |
 | `ipodvm.py` | command line |
 | `mcp_server.py` | MCP server (stdio) |
+| `heap-hooks-2.0.5.txt` | stock 2.0.5 allocator hooks for `launch --heap` |
 
 ## Test disks
 
@@ -160,6 +161,44 @@ caller and appear only as unclosed.
 `--trace` writes `<summary>.trace.json` in Chrome trace format for
 <https://ui.perfetto.dev>; `--timeline insns` puts instructions on the time
 axis (1 µs = 1 instruction) instead of host time.
+
+### Heap profiling
+
+```sh
+ipodvm launch --firmware … --disk … --heap \
+    [--symbols <firmware repo>/ghidra/analysis/2.0.5/osos/functions.jsonl] \
+    [--elf … --profile 'cfw_*']
+ipodvm profile keys ret            # what this input allocated, and what it left live
+ipodvm profile heap                # heap section only
+```
+
+`--heap` with no hooks tracks the stock 2.0.5 allocator through
+[`heap-hooks-2.0.5.txt`](heap-hooks-2.0.5.txt). That file lists the shims in
+front of the core allocator and the core free, with their argument registers.
+`--heap 0xADDR:KIND[:NAME]…` replaces the list with other hooks. The formats
+are described in the plugin header. The plugin tracks every block from the
+first guest instruction, so the live totals cover the whole native heap, not
+just the recording window.
+
+| Field | Meaning |
+|---|---|
+| `live_bytes`, `live_count` | Blocks allocated now, overall and per heap instance (the allocator's first argument) |
+| `peak_bytes` | Highest live total while recording since the last reset |
+| `allocs`, `bytes`, `frees`, `freed_bytes` | Activity while recording since the last reset |
+| `failed`, `dropped`, `pending` | Allocations that returned null; allocations whose return was lost because more than 32 were waiting; allocations waiting at dump time |
+| Sites | Return addresses of allocation calls. They are named from `--elf` (payload) and `--symbols` (a Ghidra `functions.jsonl` export, for stock code). |
+| `holding` | Sites ranked by the live bytes they allocated at any time |
+| `leaking` | Sites ranked by blocks allocated while recording since the last reset that are still live, with the largest examples (pointer, size, allocation sequence number) |
+| `alloc_calls`, `alloc_bytes`, `free_calls`, `freed_bytes` (per function) | Allocations and tracked frees while that watched function was the innermost open frame |
+| `alloc_incl`, `freed_incl` (per function) | The same bytes while it or a watched callee was |
+
+Sizes are the requested sizes. Allocator headers and rounding are not
+counted. `untracked_frees` (a free of a pointer that was never seen allocated)
+and `replaced` (an allocation that returned a pointer still live) are both 0
+when the hooks cover every allocator path. A nonzero value means an allocator
+entry point is missing from the hook list. To cross-check a 2.0.5 heap, read
+its live-block counter at heap + 0x390: `ipodvm hmp 'xp /1wd 0x…'` should match
+that heap's `live_count`.
 
 ### Instruments
 

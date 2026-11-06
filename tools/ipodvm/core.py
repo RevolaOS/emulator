@@ -4,6 +4,7 @@ Functions return plain data and report progress through `log` (stderr), so
 the CLI and the MCP server can share them. Each VM lives in
 /tmp/ipodvm/<name>/, short enough for macOS's 104-byte Unix socket limit.
 """
+import bisect
 import fnmatch
 import hashlib
 import json
@@ -324,6 +325,43 @@ def profile_symbols(elf, patterns, fns, image, base, file_offset):
     return sorted(unique.items())
 
 
+_REG = r'/r(?:[0-9]|1[0-2])'
+HEAP_KIND = re.compile(rf'(?:alloc|free)(?:{_REG}){{0,2}}|realloc(?:(?:{_REG}){{2,3}})?')
+
+
+HEAP_PRESET = TOOL / 'heap-hooks-2.0.5.txt'
+
+
+def heap_hooks(specs):
+    """Parse heap hooks "0xADDR:KIND[:NAME]"; [] means the stock 2.0.5 preset."""
+    hooks = []
+    if specs == []:
+        for line in HEAP_PRESET.read_text().splitlines():
+            line = line.split('#', 1)[0].strip()
+            if line:
+                addr, kind, *name = line.split(None, 2)
+                hooks.append((addr, kind, name[0] if name else kind))
+    else:
+        for spec in specs or []:
+            addr, _, rest = spec.partition(':')
+            kind, _, name = rest.partition(':')
+            hooks.append((addr, kind, name or kind))
+    parsed = []
+    for addr, kind, name in hooks:
+        try:
+            value = int(addr, 0)
+        except ValueError:
+            value = None
+        if value is None or not HEAP_KIND.fullmatch(kind):
+            raise Failure(f'bad heap hook {addr} {kind}; expected 0xADDR alloc[/SIZE[/HEAP]], '
+                          'free[/PTR[/HEAP]] or realloc[/PTR/SIZE[/HEAP]] with registers r0-r12')
+        parsed.append((value, kind, name))
+    duplicates = sorted({a for a, _, _ in parsed if [p[0] for p in parsed].count(a) > 1})
+    if duplicates:
+        raise Failure(f'duplicate heap hooks: {", ".join(f"{a:#010x}" for a in duplicates)}')
+    return parsed
+
+
 def ensure_plugin():
     source = QEMU_ROOT / 'contrib/plugins/funcprof.c'
     if not PLUGIN.exists() or PLUGIN.stat().st_mtime < source.stat().st_mtime:
@@ -405,7 +443,7 @@ def prepare_disk(base, out, themes=None, clean=True):
 
 def launch(name, firmware, disk, layout=None, title=None, headless=False, keep_running=False,
            wait=True, boot_timeout=180, elf=None, profile=None, fns=None, trace=False,
-           timeline=None, signpost=False, cwd=None):
+           timeline=None, signpost=False, heap=None, symbols=None, cwd=None):
     """Start a VM; with `wait`, return once the first screen is stable (paused)."""
     cwd = Path(cwd or Path.cwd())
     firmware = Path(firmware).expanduser().resolve()
@@ -451,14 +489,27 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, keep_r
                '-display', 'none' if headless else 'sdl']
 
     profiling = None
-    if profile is not None or fns:
+    hooks = heap_hooks(heap) if heap is not None else []
+    if symbols and not hooks:
+        raise Failure('--symbols names heap allocation sites; it needs --heap')
+    if symbols:
+        symbols = Path(symbols).expanduser().resolve()
+        if not symbols.is_file():
+            raise Failure(f'{symbols} not found')
+    if profile is not None or fns or hooks:
         entries = profile_symbols(elf, profile, fns, image, base, file_offset)
         ensure_plugin()
-        symbols = run / 'profile.syms'
-        symbols.write_text(''.join(f'{addr:#010x} {label}\n' for addr, label in entries))
         os.mkfifo(run / 'profile.ctl')
-        plugin = [str(PLUGIN), f'syms={symbols}', f'ctl={run / "profile.ctl"}',
-                  f'out={run / "profile-exit.json"}']
+        plugin = [str(PLUGIN), f'ctl={run / "profile.ctl"}', f'out={run / "profile-exit.json"}']
+        if entries:
+            watched = run / 'profile.syms'
+            watched.write_text(''.join(f'{addr:#010x} {label}\n' for addr, label in entries))
+            plugin.append(f'syms={watched}')
+        if hooks:
+            hook_file = run / 'profile.heap'
+            hook_file.write_text(''.join(f'{addr:#010x} {kind} {label}\n'
+                                         for addr, kind, label in hooks))
+            plugin.append(f'heaps={hook_file}')
         if trace:
             plugin.append('trace=on')
         if timeline:
@@ -466,8 +517,9 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, keep_r
         if signpost:
             plugin.append('signpost=on')
         command += ['-plugin', ','.join(plugin)]
-        profiling = {'functions': len(entries),
-                     'elf': str(Path(elf).resolve()) if elf else None}
+        profiling = {'functions': len(entries), 'heap_hooks': len(hooks),
+                     'elf': str(Path(elf).resolve()) if elf else None,
+                     'symbols': str(symbols) if symbols else None}
 
     record = {'title': title, 'command': command, 'environment': environment,
               'firmware': {'path': str(firmware), 'sha256': hashlib.sha256(image).hexdigest()},
@@ -704,6 +756,92 @@ def profile_send(run, *lines):
         stream.write(''.join(line + '\n' for line in lines))
 
 
+_symbol_tables = {}
+
+
+def symbol_table(profiling):
+    """Sorted [(start, end, name, entry)] code ranges from the payload ELF and a Ghidra
+    functions.jsonl (whose functions may span several ranges). Unreadable sources and
+    malformed lines are skipped."""
+    sources = [Path(p) for p in (profiling.get('elf'), profiling.get('symbols')) if p]
+    key = tuple((str(p), p.stat().st_mtime) for p in sources if p.is_file())
+    if key in _symbol_tables:
+        return _symbol_tables[key]
+    ranges = []
+    elf = profiling.get('elf')
+    if elf and Path(elf).is_file():
+        try:
+            ranges += [(addr, addr + max(size, 1), name, addr)
+                       for addr, size, name in elf_functions(Path(elf).read_bytes())
+                       if not re.fullmatch(r'__.+_from_(arm|thumb)', name)]
+        except (OSError, struct.error, ValueError, IndexError):
+            log(f'cannot read symbols from {elf}')
+    symbols = profiling.get('symbols')
+    if symbols and Path(symbols).is_file():
+        with open(symbols) as stream:
+            for line in stream:
+                try:
+                    entry = json.loads(line)
+                    props = entry['properties']['additionalProperties']
+                    name, start = props['name'], int(props['location'], 16)
+                    for location in entry['locations']:
+                        address = location['physicalLocation']['address']
+                        begin = address['absoluteAddress']
+                        ranges.append((begin, begin + address.get('length', 1), name, start))
+                except (ValueError, KeyError, TypeError):
+                    continue
+    _symbol_tables[key] = table = sorted(ranges)
+    return table
+
+
+def symbolize(ret, table):
+    """name+0xoff (from the function entry) for a return address, looked up by the
+    call before it; None if no range contains it."""
+    addr = ret - 1
+    i = bisect.bisect_right(table, (addr, float('inf'), '', 0)) - 1
+    while i >= 0 and table[i][0] > addr - 0x10000:     # ranges may overlap
+        start, end, name, entry = table[i]
+        if start <= addr < end:
+            return f'{name}+{ret - entry:#x}'
+        i -= 1
+    return None
+
+
+def name_heap_sites(run, data):
+    try:
+        profiling = json.loads((run / 'launch.json').read_text()).get('profile') or {}
+    except (OSError, ValueError):
+        return
+    table = symbol_table(profiling)
+    for site in data['heap']['sites']:
+        site['name'] = symbolize(int(site['addr'], 16), table)
+
+
+def heap_views(data, top=25):
+    """Summary of a dump's heap section: totals plus the top sites by allocation,
+    by live bytes held and by leaked bytes, and the top watched functions."""
+    heap = data['heap']
+    sites = heap['sites']
+
+    def ranked(key, fields):
+        rows = sorted((s for s in sites if s[key]), key=lambda s: s[key], reverse=True)
+        return [{k: s[k] for k in ('addr', 'name', *fields) if k in s} for s in rows[:top]]
+    functions = sorted((f for f in data['functions'] if f.get('alloc_incl') or
+                        f.get('freed_incl')),
+                       key=lambda f: f['alloc_incl'], reverse=True)[:top]
+    return {
+        'totals': heap['totals'],
+        'heaps': sorted(heap['heaps'], key=lambda h: h['live_bytes'], reverse=True),
+        'allocating': ranked('bytes', ('allocs', 'bytes', 'frees', 'freed_bytes',
+                                       'leak_count', 'leak_bytes')),
+        'holding': ranked('live_bytes', ('live_count', 'live_bytes')),
+        'leaking': ranked('leak_bytes', ('leak_count', 'leak_bytes', 'leaks')),
+        'functions': [{k: f[k] for k in ('name', 'alloc_calls', 'alloc_bytes', 'alloc_incl',
+                                         'free_calls', 'freed_bytes', 'freed_incl')}
+                      for f in functions],
+    }
+
+
 def profile_dump_with(run, qmp, output):
     output = Path(output).resolve()
     output.unlink(missing_ok=True)
@@ -721,6 +859,8 @@ def profile_dump_with(run, qmp, output):
         if not was_running:
             qmp.stop()
     data = json.loads(output.read_text())
+    if 'heap' in data:
+        name_heap_sites(run, data)
     data['summary'] = str(output)
     trace = Path(f'{output}.trace.json')
     if trace.exists():

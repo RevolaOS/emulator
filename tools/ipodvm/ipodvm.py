@@ -40,7 +40,46 @@ def show_screen(data):
     print(f'  shot: {data["shot"]}')
 
 
-def show_profile(data, top):
+def show_heap(data, top):
+    views = core.heap_views(data, top)
+    t = views['totals']
+    print(f'heap: {t["live_bytes"]:,} B live in {t["live_count"]:,} blocks; since reset '
+          f'{t["allocs"]:,} allocs {t["bytes"]:,} B, {t["frees"]:,} frees '
+          f'{t["freed_bytes"]:,} B, peak {t["peak_bytes"]:,} B live')
+    problems = [f'{t[k]:,} {k.replace("_", " ")}' for k in
+                ('failed', 'untracked_frees', 'replaced', 'dropped') if t[k]]
+    if problems:
+        print(f'  warning: {", ".join(problems)}')
+    for h in views['heaps']:
+        print(f'  heap {h["heap"]}: {h["live_bytes"]:>12,} B live {h["live_count"]:>8,} blocks'
+              f'  peak {h["peak_bytes"]:>12,}  +{h["bytes"]:,} -{h["freed_bytes"]:,}')
+
+    def site_label(s):
+        return f'{s["addr"]} {s.get("name") or ""}'[:48]
+    tables = [('allocating since reset', 'allocating', ('allocs', 'bytes', 'leak_bytes')),
+              ('holding live bytes', 'holding', ('live_count', 'live_bytes')),
+              ('leaked since reset', 'leaking', ('leak_count', 'leak_bytes'))]
+    for title, key, columns in tables:
+        if not views[key]:
+            continue
+        print(f'{"site (" + title + ")":48} ' + ' '.join(f'{c:>12}' for c in columns))
+        for s in views[key]:
+            print(f'{site_label(s):48} ' + ' '.join(f'{s[c]:>12,}' for c in columns))
+    if views['functions']:
+        columns = ('alloc_calls', 'alloc_bytes', 'alloc_incl', 'freed_bytes', 'freed_incl')
+        print(f'{"function (heap)":36} ' + ' '.join(f'{c:>12}' for c in columns))
+        for f in views['functions']:
+            print(f'{f["name"][:36]:36} ' + ' '.join(f'{f[c]:>12,}' for c in columns))
+    print('bytes are requested sizes; allocator headers and rounding are not included')
+
+
+def show_profile(data, top, heap_only=False):
+    if heap_only:
+        if 'heap' not in data:
+            raise core.Failure('this VM was launched without heap hooks (--heap)')
+        show_heap(data, top)
+        print(f'summary {data["summary"]}')
+        return
     total = data['insns'] or 1
     print(f'{data["insns"]:,} guest instructions recorded over '
           f'{data["host_ns"] / 1e9:.1f} s host time')
@@ -54,6 +93,8 @@ def show_profile(data, top):
               f'{f["max"]:>11,} {f["host_ns"] / 1e6:>9.1f}{note}')
     print('incl counts watched and unwatched callees; self excludes watched callees only, '
           'so stock code a hook calls is part of its self')
+    if 'heap' in data:
+        show_heap(data, top)
     if data.get('events_dropped'):
         print(f'warning: {data["events_dropped"]:,} trace events dropped (tracecap)')
     print(f'summary {data["summary"]}')
@@ -73,7 +114,7 @@ def show(command, data, args):
             print(f'  {step}')
         show_screen(data)
     elif command == 'profile' and 'functions' in data:
-        show_profile(data, args.top)
+        show_profile(data, args.top, args.action == 'heap')
     elif command == 'list':
         for vm in data:
             state = f'running pid {vm["pid"]}' if vm['running'] else 'stopped'
@@ -85,7 +126,8 @@ def show(command, data, args):
         print(f'  title    {data["title"]}')
         print(f'  firmware {data["firmware"]["path"]} ({data["firmware"]["sha256"][:12]})')
         if data.get('profile'):
-            print(f'  profiling {data["profile"]["functions"]} functions')
+            print(f'  profiling {data["profile"]["functions"]} functions, '
+                  f'{data["profile"].get("heap_hooks", 0)} heap hooks')
         if data.get('warning'):
             print(f'  warning: {data["warning"]}')
     else:
@@ -125,9 +167,15 @@ def main():
     p.add_argument('--trace', action='store_true', help='record per-call events for Perfetto')
     p.add_argument('--timeline', choices=['host', 'insns'], help='trace time axis (default host)')
     p.add_argument('--signpost', action='store_true', help='emit os_signposts for Instruments')
+    p.add_argument('--heap', nargs='*', metavar='0xADDR:KIND[:NAME]',
+                   help='track heap allocations through these hooks (none = the stock '
+                        '2.0.5 allocator, heap-hooks-2.0.5.txt)')
+    p.add_argument('--symbols', metavar='FUNCTIONS_JSONL',
+                   help='Ghidra functions.jsonl for naming stock-firmware allocation sites')
     p.set_defaults(func=lambda a: core.launch(
         a.name, a.firmware, a.disk, a.layout, a.title, a.headless, a.run, not a.no_wait,
-        a.boot_timeout, a.elf, a.profile, a.fn, a.trace, a.timeline, a.signpost))
+        a.boot_timeout, a.elf, a.profile, a.fn, a.trace, a.timeline, a.signpost, a.heap,
+        a.symbols))
 
     p = sub.add_parser('disk', help='clone a test disk and install theme packs')
     p.add_argument('--base', required=True, help='disk image to clone (never modified)')
@@ -188,8 +236,9 @@ def main():
     p.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
     p.set_defaults(func=lambda a: core.list_vms())
 
-    p = named('profile', 'control the function profiler')
-    p.add_argument('action', choices=['dump', 'reset', 'start', 'stop', 'keys'])
+    p = named('profile', 'control the function and heap profiler')
+    p.add_argument('action', choices=['dump', 'heap', 'reset', 'start', 'stop', 'keys'],
+                   help='heap: dump and show only the heap section')
     p.add_argument('keys', nargs='*', help='for `keys`: inputs to profile')
     p.add_argument('--settle', type=float, default=0,
                    help='for `keys`: extra run time after the last key before the dump')
@@ -201,7 +250,7 @@ def main():
             if not a.keys:
                 raise core.Failure('profile keys needs at least one key')
             return core.profile_keys(a.name, a.keys, a.settle, a.out)
-        if a.action == 'dump':
+        if a.action in ('dump', 'heap'):
             return core.profile_dump(a.name, a.out)
         return core.profile_control(a.name, a.action)
     p.set_defaults(func=run_profile)

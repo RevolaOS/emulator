@@ -25,7 +25,7 @@ boots it in a live window, `ipodvm screen` reads the screen as structured
 text, and `ipodvm goto Settings/Theme` navigates by row names with verified
 input. `key`, `select`, `menu`, `wait`, `shot` and `quit` cover the rest, and
 `mcp_server.py` exposes the same operations as MCP tools. It also provides the
-non-halting function profiler.
+non-halting function and heap profiler.
 
 When launching by hand, set the three `reprise_*` paths for the run first.
 `HLE_AUDIO_DISK` must be the same absolute disk-image path passed to QEMU's

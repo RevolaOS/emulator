@@ -1,0 +1,16 @@
+# Heap allocator hooks for the funcprof heap tracker in stock iPod Classic
+# firmware 2.0.5 (`ipodvm launch --heap` with no hooks reads this file).
+# Format: 0xADDR KIND NAME, KIND = alloc/SIZE/HEAP, free/PTR/HEAP or
+# realloc/PTR/SIZE/HEAP (argument registers).
+#
+# Stock 2.0.5: every allocation reaches the core allocator 0x08192a34
+# (heap, size, zero, tag, old ptr, copy, flag, caller) through these shims,
+# which are entered by tail calls from the public wrappers (Heap_AllocateZeroed
+# 0x0805232c, Runtime_OperatorNew 0x082a17e0, ...), so LR is the real caller.
+# Every free reaches 0x08192ec8 (heap, ptr, tag), including the free of a
+# moved realloc block.
+0x081927ec alloc/r1/r0 HeapCore_AllocZeroed
+0x08193068 alloc/r1/r0 HeapCore_Alloc
+0x08192cdc alloc/r1/r0 HeapCore_AllocFlagged
+0x0819308c realloc/r1/r2/r0 HeapCore_Realloc
+0x08192ec8 free/r1/r0 HeapCore_Free
