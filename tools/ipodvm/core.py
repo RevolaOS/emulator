@@ -290,7 +290,7 @@ def elf_bytes(data, addr, length):
 def profile_symbols(elf, patterns, fns, image, base, file_offset):
     """Select watched functions and check the ELF describes this image's code."""
     entries = []
-    if elf:
+    if patterns is not None:
         data = Path(elf).read_bytes()
         if data[:4] != b'\x7fELF' or data[4] != 1 or data[5] != 1:
             raise Failure(f'{elf}: not a 32-bit little-endian ELF')
@@ -300,7 +300,7 @@ def profile_symbols(elf, patterns, fns, image, base, file_offset):
         functions = [f for f in elf_functions(data)
                      if not re.fullmatch(r'__.+_from_(arm|thumb)', f[2])
                      and base <= f[0] < payload_end]
-        patterns = patterns or ['*']
+        patterns = patterns or ['*']    # --profile without globs: every function
         chosen = [f for f in functions if any(fnmatch.fnmatch(f[2], p) for p in patterns)]
         if not chosen:
             raise Failure(f'no functions in {elf} match {patterns}')
@@ -439,7 +439,8 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, keep_r
     environment = dict(ENVIRONMENT, HLE_AUDIO_DISK=str(run / 'disk.img'),
                        AUDIOWAV=str(run / 'audio.wav'))
     title = title or owner_label(name, cwd)
-    command = [str(QEMU), '-name', title, '-M', 'iPod-Classic',
+    # QEMU option values escape a comma by doubling it.
+    command = [str(QEMU), '-name', title.replace(',', ',,'), '-M', 'iPod-Classic',
                '-kernel', str(run / 'body.bin'),
                '-device', f'loader,file={run / "payload.bin"},addr={base:#010x},force-raw=on',
                '-drive', f'if=ide,format=raw,file={run / "disk.img"}', '-snapshot',
@@ -553,9 +554,9 @@ def quit_vm(name):
             pass
     for _ in range(50):
         if not pid_alive(pid):
-            break
+            return {'name': name, 'state': 'stopped'}
         time.sleep(0.1)
-    return {'name': name, 'state': 'stopped'}
+    raise Failure(f'{name}: QEMU pid {pid} still running 5 s after quit')
 
 
 def resume(name, seconds=None):
