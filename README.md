@@ -1,12 +1,28 @@
 # Two clickwheel iPods in QEMU, booting Apple's real firmware
 
+> **This fork** ([paviro/qemu-ipod-classic](https://github.com/paviro/qemu-ipod-classic))
+> is the emulator used to develop and test RepriseOS and osos firmware patches for the
+> iPod Classic 6G/7G on Apple firmware 2.0.5. It combines:
+>
+> - [davidmonterocrespo24/qemu-ipod-classic](https://github.com/davidmonterocrespo24/qemu-ipod-classic):
+>   the `iPod-Classic` and `iPod-Video` machines. Most of this README is theirs.
+> - [mica-angeli/qemu-ipod-classic](https://github.com/mica-angeli/qemu-ipod-classic):
+>   firmware 2.0.5 and RepriseOS support. See
+>   [Firmware 2.0.5 and RepriseOS](#firmware-205-and-repriseos).
+> - [joelheaps/qemu-ipod-classic](https://github.com/joelheaps/qemu-ipod-classic):
+>   the ordered click-wheel input queue and mouse input. See [Keys](#keys).
+> - This fork's own tooling: [`tools/ipodvm`](tools/ipodvm/README.md), which launches,
+>   drives, reads and profiles RepriseOS VMs from the command line or as MCP tools;
+>   the `funcprof` TCG plugin for per-function guest cost and guest heap tracking; and
+>   the [macOS build](#macos-apple-silicon).
+
 This fork of [QEMU-iOS](https://github.com/devos50/qemu-ios) adds **two machines**
 that emulate clickwheel iPods and **boot real software dumped from the physical
 devices**, with no boot ROM and without patching a single firmware instruction.
 
 | Machine | SoC | What it boots |
 |---|---|---|
-| **`iPod-Classic`** | Samsung S5L8702 | **Apple's retailOS**: RTXC kernel, disk, fonts, full clickwheel navigation, and **the music player — Now Playing screen and audio out of the guest's own I2S** |
+| **`iPod-Classic`** | Samsung S5L8702 | **Apple's retailOS**: RTXC kernel, disk, fonts, full clickwheel navigation, and **the music player — Now Playing screen and audio out of the guest's own I2S**. Firmware 1.1.2, and [2.0.5 / RepriseOS](#firmware-205-and-repriseos) |
 | **`iPod-Video`** | PortalPlayer PP5022C | **Rockbox** up to its menu, navigable, and **Apple's retailOS**: language screen → main menu → submenus → back |
 
 Neither machine emulates Apple's boot ROM. The *hardware* the firmware touches is
@@ -88,6 +104,11 @@ once playback is going.
 and switching tracks gives a burst and then silence. The MP3 decode itself is done
 host-side, the way an emulator handles an undocumented on-chip codec; everything else —
 track selection, transport, render pump, DMA, I2S — runs on the firmware.
+
+That paragraph describes firmware 1.1.2 with the flags in
+[Running the music player](#running-the-music-player). On firmware 2.0.5, `SM1_SYNC`
+models the audio engine as a per-frame decoder instead; see
+[Firmware 2.0.5 and RepriseOS](#firmware-205-and-repriseos).
 
 Full write-up: [`wiki/20-classic6g-reproductor.md`](wiki/20-classic6g-reproductor.md)
 (how it was fixed) and [`wiki/19-classic6g-dsp-hle.md`](wiki/19-classic6g-dsp-hle.md)
@@ -203,9 +224,10 @@ HLE_AUDIO_DATAPATH=1 HLE_AUDIO_SUSTAIN=1 HLE_AUDIO_DISK=<disk image> \
 and that lands on memory which is not ours, freezing the UI mid-transition while audio
 keeps playing.
 
-`AUDIOWAV=/path.wav` captures everything the I2S clocks out. There is no live audio
-backend — the I2S model only writes WAV. To hear it while it runs, pipe the file to a
-player; note that `ffplay` **hangs silently** unless you set `SDL_AUDIODRIVER=pulse`.
+`AUDIOWAV=/path.wav` captures everything the I2S clocks out. `AUDIOLIVE=1` also plays
+it through QEMU's `-audio` backend, scaled by the codec's headphone gain (`AUDIOGAIN`,
+see [Firmware 2.0.5 and RepriseOS](#firmware-205-and-repriseos)). The WAV records the
+bus before that gain.
 
 ### Keys
 
@@ -217,8 +239,17 @@ player; note that `ffplay` **hangs silently** unless you set `SDL_AUDIODRIVER=pu
 | `a` / `d` | previous / next |
 | `s` | PLAY / PAUSE |
 
-Same as the 5G machine, so one habit covers both. Note the retailOS clickwheel **drops
-roughly 5 of every 7 SELECT presses** — if it does not register, press again.
+Same as the 5G machine, so one habit covers both. In the SDL window the mouse also
+works: the scroll wheel turns the click wheel, the left button is SELECT and the
+right button is MENU.
+
+Wheel steps and button edges go into one ordered queue. The model sends the next
+packet only after the guest's wheel task has consumed the previous one, which it
+reads from the task's state block in guest RAM (`S5L8702_WHEEL_STATE_BLOCK`,
+`0x089d2b8c` in firmware 2.0.5). Button edges are at least 80 ms apart. A packet the
+guest has not acknowledged within 1 s is sent anyway. `WHEELTRACE=1` prints totals
+at exit, including how many packets were sent before the guest was idle and how many
+inputs were lost to a full queue.
 
 ### Properties and trace variables
 
@@ -237,6 +268,87 @@ is its `addr` in the firmware directory.
 | `ATATRACE=1` | the whole ATA conversation, register by register |
 | `WHEELTRACE=1` | packets, commands and IRQ 23 edges |
 | `SM1TRACE=1`, `PMUTRACE=1`, `I2SCOUNT=1`, `DMATRACE=1` | the audio path, the PMU, the I2S and the DMA controllers |
+
+---
+
+## Firmware 2.0.5 and RepriseOS
+
+Apple's last Classic firmware, 2.0.5 (the 6.5G and 7G firmware, and the base of
+[RepriseOS](https://github.com/lgreitis/osos-lab)), runs on the same `iPod-Classic`
+machine. RepriseOS test VMs are normally launched and driven with
+[`tools/ipodvm`](tools/ipodvm/README.md), which applies the flags from
+[Running the music player](#running-the-music-player):
+
+```sh
+python3 tools/ipodvm/ipodvm.py launch --firmware <osos-cfw.bin> --disk <disk.img>
+```
+
+![Firmware 2.0.5 with SM1_SYNC: Songs, Now Playing, the volume bar, and paused](docs/screenshots/classic-2.0.5.png)
+
+### What the model provides for 2.0.5
+
+| Block | Behaviour |
+|---|---|
+| SysInfo | The synthesised block reports hardware ID `0x00130300` and loader version `0x01808003`, the values the RepriseOS companion loader passes. 2.0.5 reboots into `softupdt` unless the hardware ID is `0x0013xxxx` with a low half of at least `0x300`. `sysinfo=<file>` replaces the block with a real device's 0x120 bytes, which carries its FireWire GUID |
+| ATA | The drive interrupt sets `ATA_IRQ` bits 2 and 0. Apple's 2.0.5 driver unmasks bit 2 after each non-data command and waits for it |
+| I2C | A STOP ends the transfer, and a repeated START to a different address re-addresses the bus, so the PMU and the CS42L55 codec each receive only their own transactions |
+| Click wheel | One ordered input queue, paced by the guest's wheel task; see [Keys](#keys) |
+| SHA-1 | The block is a compression function with a readable and writable chaining state, as Apple's driver uses it, so the iTunesDB signature (`hash58`) is checked for real. `SHA1_ZERO=1` makes the state read as zero, which matches a database whose hash was blanked |
+| Codec volume | The CS42L55 headphone gain (−60 dB to +2 dB, mute) scales the `AUDIOLIVE` output. The factory default is −32 dB. `AUDIOGAIN=<dB>` adds make-up gain, capped at unity; `AUDIOGAIN=line` ignores the codec |
+| Audio engine (`SM1_SYNC=1`) | One completion per compressed frame the guest hands the engine, delivered once the guest has taken the previous slot, and the `+0xa48` window register reads 0. With `SM1_DECODE=1` each slot carries that frame's PCM, and the host DMA feed is off |
+| Host decode | The data-path shim finds the track by locating the bytes the guest hands the engine in the files on the disk, and decodes it with `ffmpeg`. MP3 and AAC (`.m4a`) are indexed frame by frame |
+
+### Playback configurations
+
+ipodvm and the UI tests use the flags in
+[Running the music player](#running-the-music-player), with `SHA1_ZERO=1` and a disk
+whose iTunesDB hash is blanked. The playback limits under
+[Known limits](#known-limits) apply to that configuration.
+
+[`tools/ipod_classic/run7g.sh`](tools/ipod_classic/run7g.sh) selects the per-frame
+engine model instead (`SM1_IRQ SM1_SYNC SM1_DECODE HLE_AUDIO_DATAPATH AUDIOPACE
+AUDIOLIVE AUDIOGAIN DISP_ALPHA`, without `SHA1_ZERO`) and documents each flag. It
+expects the device's `sysinfo.bin` and a disk signed for that device's GUID.
+
+### Files and disks for `run7g.sh`
+
+You need an iPod Classic with RepriseOS installed, whose disk holds the decrypted
+`osos-cfw.bin` and `cfw-loader.bin`, and `iPod_38.2.0.5.ipsw` for the firmware
+partition. A disk with music also needs `ffmpeg`, `dosfstools`, `mtools`, `libplist`
+and a built [libgpod](https://github.com/fadingred/libgpod) source tree
+(`src/.libs/libgpod.a`).
+
+```sh
+# The firmware, from the iPod's own disk. sysinfo.bin identifies the device:
+# keep it out of anything you publish.
+python3 tools/ipod_classic/reprise_split.py \
+        /Volumes/IPOD/osos-cfw.bin /Volumes/IPOD/cfw-loader.bin assets/classic7g
+
+# The firmware partition, out of the .ipsw (it is a zip).
+mkdir -p assets/ipsw-2.0.5 && unzip -o iPod_38.2.0.5.ipsw -d assets/ipsw-2.0.5
+
+# A disk with music, signed for this device (BLANK_HASH58=1 blanks the hash instead,
+# for runs with SHA1_ZERO=1)...
+LIBGPOD=~/src/libgpod tools/ipod_classic/mkmusic.sh assets/disk/music-2.0.5.img \
+        assets/ipsw-2.0.5/Firmware-38.9.0.5 assets/classic7g/sysinfo.bin *.mp3 *.m4a
+
+# ...or an empty one.
+truncate -s 64M fat32.img && mkfs.vfat -F 32 -n IPOD fat32.img
+python3 tools/ipod_classic/mkdisk6g4k.py assets/disk/E-2.0.5.img \
+        assets/ipsw-2.0.5/Firmware-38.9.0.5 fat32.img
+
+DISK=assets/disk/music-2.0.5.img tools/ipod_classic/run7g.sh
+```
+
+### Limits on 2.0.5
+
+- **The decode is host-side.** The on-chip codec is not emulated. HE-AAC and ALAC
+  are not handled.
+- **The host decoder indexes the first 64 audio files on the disk.** A track outside
+  them is not identified, and its audio is not decoded.
+- **A guest crash looks like a freeze.** RepriseOS's panic handler draws straight to
+  the panel, which the display model does not show.
+- **No USB**, as on 1.1.2.
 
 ---
 
@@ -328,7 +440,8 @@ Detail, including what is *not* modelled, in
 
 Listed because the value of this documentation is that it can be trusted.
 
-**iPod Classic 6G**
+**iPod Classic 6G** (with the flags in [Running the music player](#running-the-music-player);
+see also [Limits on 2.0.5](#limits-on-205))
 
 - **The player's elapsed time stays at 0:00.** Making the SM1 position register follow
   the I2S does not move it, so that counter comes from the player's own bookkeeping.
@@ -380,7 +493,15 @@ The wiki is in Spanish.
 
 ## This repository is a fork
 
-Forked from [devos50/qemu-ios](https://github.com/devos50/qemu-ios) (QEMU 8.2.0), branch
+paviro/qemu-ipod-classic is a fork of
+[davidmonterocrespo24/qemu-ipod-classic](https://github.com/davidmonterocrespo24/qemu-ipod-classic)
+and includes the main branch of
+[mica-angeli/qemu-ipod-classic](https://github.com/mica-angeli/qemu-ipod-classic) and
+the click-wheel commits of
+[joelheaps/qemu-ipod-classic](https://github.com/joelheaps/qemu-ipod-classic).
+The rest of this section describes the upstream project.
+
+That project was forked from [devos50/qemu-ios](https://github.com/devos50/qemu-ios) (QEMU 8.2.0), branch
 `ipod_touch_2g`, which emulates the **iPod Touch 1G and 2G**. That work is here intact
 and its machines are listed in `-M help`:
 
