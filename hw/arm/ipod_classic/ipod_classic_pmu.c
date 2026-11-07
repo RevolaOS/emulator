@@ -29,7 +29,9 @@
  *     read-to-clear on the real chip and therefore must not be a plain
  *     register file: a driver that reads them expects the bits to go away.
  *   - External power presence in MBCS1 (battery, USB or adapter), changeable
- *     while running; a change latches the INT1 insert/remove events.
+ *     while running; a change latches the INT1 insert/remove events, and
+ *     for USB also the INT2 EXTON2 edge and OOCSTAT EXTON2 presence that
+ *     firmware 2.0.5 actually uses (see the header).
  *   - The hold switch in GPIOSTAT, changeable while running; a change latches
  *     the INT6 hold event.
  *   - The INT output, on SoC GPIO 0x7b (see pmu_update_irq).
@@ -117,7 +119,8 @@ static IPodClassicPMUPower pmu_initial_power(void)
  * MEASURED with firmware 2.0.5: it leaves the INT1 plug events unmasked
  * (INT1M 0xb0) and answers a power change by reading INT1..INT6 and then
  * MBCS1, so plugging or unplugging takes effect at once -- leaving the
- * Charging screen on unplug, and waking from standby on plug-in.
+ * Charging screen on unplug, and waking from standby on plug-in. The adapter
+ * events it acts on are in INT1; the USB ones are in INT2 (see the header).
  */
 static void pmu_update_irq(IPodClassicPMUState *s)
 {
@@ -143,8 +146,13 @@ void ipod_classic_pmu_set_power(IPodClassicPMUState *s, IPodClassicPMUPower powe
     if (power == s->power) {
         return;
     }
-    /* The events latch in INT1 until the firmware reads it (read to clear). */
+    /* The events latch in INT1/INT2 until the firmware reads them (read to clear). */
     s->reg[PCF5063X_REG_INT1] |= removed[s->power] | inserted[power];
+    if (power == IPOD_CLASSIC_PMU_POWER_USB) {
+        s->reg[PCF5063X_REG_INT2] |= PCF5063X_INT2_EXTON2R;
+    } else if (s->power == IPOD_CLASSIC_PMU_POWER_USB) {
+        s->reg[PCF5063X_REG_INT2] |= PCF5063X_INT2_EXTON2F;
+    }
     s->power = power;
     pmu_update_irq(s);
 }
@@ -200,6 +208,9 @@ static uint8_t pmu_reg_read(IPodClassicPMUState *s, uint8_t addr)
          * A plain register file leaves it stale/zero. See the header.
          */
         val = PCF5063X_OOCSTAT_HEALTHY;
+        if (s->power == IPOD_CLASSIC_PMU_POWER_USB) {
+            val |= PCF5063X_OOCSTAT_EXTON2;
+        }
         break;
     case PCF5063X_REG_MBCS1:
         /*

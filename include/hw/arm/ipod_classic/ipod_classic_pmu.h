@@ -94,6 +94,19 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicPMUState, IPOD_CLASSIC_PMU)
 #define PCF5063X_INT1_USBREM      0x08
 
 /*
+ * USB power is EXTON2, an on/off-controller input, as firmware 2.0.5 reads it.
+ * Its PMU event mapping 0x0836414c ignores INT1 USBINS/USBREM and turns INT2
+ * EXTON2R/EXTON2F (bit names from Rockbox's pcf5063x.h) into the events on
+ * which 0x080559dc runs its USB insert and remove paths. Both paths first ask
+ * 0x082dc598 whether USB is present, which reads MBCS1 USBPRES on boards whose
+ * SysInfo word (0x080db42c) has 0x11 in its top half, and OOCSTAT EXTON2 on
+ * the others.
+ */
+#define PCF5063X_INT2_EXTON2R     0x10
+#define PCF5063X_INT2_EXTON2F     0x20
+#define PCF5063X_OOCSTAT_EXTON2   0x04
+
+/*
  * External power the model reports in MBCS1. Starts from PMUCHARGER (unset:
  * battery; "adapter": adapter; anything else: USB) and can change at run time
  * through the machine's "power" property.
@@ -154,8 +167,9 @@ struct IPodClassicPMUState {
 };
 
 /*
- * Plug or unplug external power: MBCS1 reports the new state from the next
- * read on, and INT1 latches the matching insert/remove events.
+ * Plug or unplug external power: MBCS1 (and OOCSTAT EXTON2 for USB) report
+ * the new state from the next read on, and INT1 latches the matching
+ * insert/remove events, plus INT2 EXTON2R/EXTON2F for USB.
  */
 void ipod_classic_pmu_set_power(IPodClassicPMUState *s, IPodClassicPMUPower power);
 
