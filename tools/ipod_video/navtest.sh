@@ -22,9 +22,9 @@ out=${1:-$root/assets/nav}
 
 ENTRY_ROCKBOX=0x735a00
 
-[ -x "$qemu" ] || { echo "no encuentro $qemu; compila primero" >&2; exit 1; }
-[ -f "$osos" ] || { echo "no encuentro $osos" >&2; exit 1; }
-[ -f "$disk" ] || { echo "no encuentro $disk" >&2; exit 1; }
+[ -x "$qemu" ] || { echo "cannot find $qemu; build it first" >&2; exit 1; }
+[ -f "$osos" ] || { echo "cannot find $osos" >&2; exit 1; }
+[ -f "$disk" ] || { echo "cannot find $disk" >&2; exit 1; }
 
 mkdir -p "$out"
 rm -f "$out"/*.ppm "$out"/*.png
@@ -80,15 +80,15 @@ for path in sorted(glob.glob(os.path.join(out, "*.ppm"))):
 
     lit = sum(1 for i in range(0, len(data), 3) if data[i:i + 3] != b"\x00\x00\x00")
     if prev is None:
-        print("%-28s %6d px encendidos" % (os.path.basename(path), lit))
+        print("%-28s %6d px lit" % (os.path.basename(path), lit))
     else:
         diff = sum(1 for i in range(0, len(data), 3)
                    if data[i:i + 3] != prev[i:i + 3])
-        print("%-28s %6d px encendidos   %6d px distintos del anterior"
+        print("%-28s %6d px lit   %6d px differ from the previous"
               % (os.path.basename(path), lit, diff))
     prev = data
 EOF
 
 rm -f "$out"/*.ppm
 echo
-echo "PNGs en $out"
+echo "PNGs in $out"

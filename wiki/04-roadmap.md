@@ -1,52 +1,52 @@
 # Roadmap
 
-> **Estado a 10 de agosto de 2026: las dos máquinas arrancan el firmware
-> original de Apple y las dos se navegan.** Este documento es el más largo y el
-> más cercano a un diario, y por tanto el que más se queda atrás. Las secciones
-> anteriores a «Estrategia» son el recorrido del iPod Video 5G y siguen siendo
-> válidas. La parte del Classic, desde «Estrategia» hasta el final, se escribió
-> cuando su firmware era ilegible: **está corregida al final**, en
-> [«Estado actual»](#estado-actual-10-de-agosto-de-2026), y la crónica completa
-> está en [12-historia-6g.md](12-historia-6g.md).
+> **Status as of August 10, 2026: both machines boot Apple's original
+> firmware and both can be navigated.** This document is the longest and the
+> closest to a diary, and therefore the one that falls behind the most. The
+> sections before "Strategy" are the journey of the iPod Video 5G and remain
+> valid. The Classic part, from "Strategy" to the end, was written
+> when its firmware was unreadable: **it is corrected at the end**, in
+> ["Current status"](#current-status-august-10-2026), and the full chronicle
+> is in [12-history-6g.md](12-history-6g.md).
 
-## Dos objetivos, dos máquinas
+## Two targets, two machines
 
-El proyecto arrancó apuntando al **iPod classic 6G** (S5L8702) y se topó con que
-su firmware está cifrado con una clave que vive en el silicio. Al aparecer un
-**iPod Video 5G** físico, cuyo firmware está en claro, el objetivo de arrancar
-el sistema original de Apple se movió allí. Después, el bloqueo del Classic cayó
-por un camino que no era el previsto: **no había que extraer la clave, sino
-pedirle al aparato que descifrara** ([10](10-classic6g-emcore.md)).
+The project started out aiming at the **iPod classic 6G** (S5L8702) and ran into
+the fact that its firmware is encrypted with a key that lives in the silicon. When a
+physical **iPod Video 5G** turned up, whose firmware is in the clear, the goal of booting
+Apple's original system moved there. Later, the Classic blocker fell
+by a path that was not the expected one: **the key did not have to be extracted; instead
+the device had to be asked to decrypt** ([10](10-classic6g-emcore.md)).
 
-| Máquina | SoC | Estado |
+| Machine | SoC | Status |
 |---|---|---|
-| `iPod-Classic` | S5L8702 | **arranca el retailOS de Apple**: kernel RTXC, ATA con DMA, volumen `rsrc` montado, tipografías, y la pantalla de idioma — 75 463 de 76 800 píxeles — que la rueda mueve y el botón central atraviesa |
-| `iPod-Video` | PP5022C | **Rockbox se navega entero, y el retailOS de Apple también: arranca, dibuja su interfaz y responde a la rueda y a los botones** |
+| `iPod-Classic` | S5L8702 | **boots Apple's retailOS**: RTXC kernel, ATA with DMA, `rsrc` volume mounted, fonts, and the language screen — 75 463 of 76 800 pixels — which the wheel moves and the center button passes through |
+| `iPod-Video` | PP5022C | **Rockbox is fully navigable, and so is Apple's retailOS: it boots, draws its interface and responds to the wheel and the buttons** |
 
-## iPod Video (PP502x) — estado
+## iPod Video (PP502x) — status
 
-Con `-M iPod-Video,entry=0x735a00 -kernel osos_full.bin`, el bootloader de
-Rockbox extraído del aparato real recorre esta secuencia:
+With `-M iPod-Video,entry=0x735a00 -kernel osos_full.bin`, the Rockbox
+bootloader extracted from the real device goes through this sequence:
 
-1. Lee `PROCESSOR_ID` (`0x60000000`) y se reconoce como CPU
-2. Espera a que el COP declare que duerme (`COP_CTL`, bit 31)
-3. Se copia a sí mismo a IRAM (`0x40000000`)
-4. Configura GPIO — seis escrituras de dirección de pines
-5. Consulta la revisión de hardware en `0x405c`
-6. Hace **transacciones I²C** contra el PMU y el códec (`0x7000c100`/`0x104`/`0x120`)
-7. Llega al **controlador IDE** (`+0x1fc`), buscando `rockbox.ipod` en la FAT32
+1. Reads `PROCESSOR_ID` (`0x60000000`) and recognizes itself as the CPU
+2. Waits for the COP to declare that it is sleeping (`COP_CTL`, bit 31)
+3. Copies itself to IRAM (`0x40000000`)
+4. Configures GPIO — six pin-direction writes
+5. Queries the hardware revision at `0x405c`
+6. Performs **I²C transactions** against the PMU and the codec (`0x7000c100`/`0x104`/`0x120`)
+7. Reaches the **IDE controller** (`+0x1fc`), looking for `rockbox.ipod` on the FAT32
 
-Modelado hasta ahora: DRAM, IRAM, ventana de flash NOR con la revisión de
-hardware, **los dos núcleos ARM** (CPU y COP, que duermen y despiertan de
-verdad), `PROCESSOR_ID`, `CPU_CTL`/`COP_CTL`, `USEC_TIMER`, UART 16550,
-controlador de interrupciones, IDE con DMA ATA, click wheel, GPIO, caché,
-remap (con los alias del bit 26 y del bit 31), **los dos bloques de DMA del
-PP502x**, **el I²C y el PCF50605**, el BCM2722 con **la interfaz de host del
-VideoCore**, reloj/PLL, control de dispositivo y **semihosting de ARM**.
+Modeled so far: DRAM, IRAM, NOR flash window with the hardware
+revision, **both ARM cores** (CPU and COP, which genuinely sleep and wake
+up), `PROCESSOR_ID`, `CPU_CTL`/`COP_CTL`, `USEC_TIMER`, 16550 UART,
+interrupt controller, IDE with ATA DMA, click wheel, GPIO, cache,
+remap (with the bit 26 and bit 31 aliases), **the two PP502x DMA
+blocks**, **the I²C and the PCF50605**, the BCM2722 with **the VideoCore
+host interface**, clock/PLL, device control and **ARM semihosting**.
 
-### El bootloader ya pinta en la pantalla emulada
+### The bootloader now paints on the emulated screen
 
-Estado actual: el bootloader de Rockbox 4.0 arranca entero y escribe en el LCD:
+Current status: the Rockbox 4.0 bootloader boots fully and writes to the LCD:
 
 ```
 No partition
@@ -56,790 +56,790 @@ and fix it.
 4.0
 ```
 
-Para llegar hasta ahí hubo que quitar cuatro bloqueos, todos del mismo tipo —
-un bit de estado que el hardware real pone y nosotros devolvíamos a cero, con
-el firmware esperándolo en un bucle sin salida:
+Getting there meant removing four blockers, all of the same kind —
+a status bit that the real hardware sets and that we returned as zero, with
+the firmware waiting for it in a loop with no way out:
 
-| Síntoma | Causa | Arreglo |
+| Symptom | Cause | Fix |
 |---|---|---|
-| bucle leyendo `0x6000603c` | `PLL_STATUS` bit 31 = PLL enganchado. `system-pp502x.c`: `while (!(PLL_STATUS & 0x80000000));` | bloque de reloj en `0x60006000`, con el bit 31 siempre puesto |
-| `Invalid write at 0xF0004000` | `cache_invalidate_special()` escribe a mano todo el array de estado de la caché, que no estaba mapeado | RAM en `0xf0000000`–`0xf000efff` |
-| 20 M lecturas de `0x70000028` | bit 7 = el bloque USB salió de reset. `usb-fw-pp502x.c`: `while ((inl(0x70000028) & 0x80) == 0);`. Ese registro **no aparece en `pp5020.h`** | bloque `DEV_CTL` en `0x70000000`, con el bit 7 siempre puesto |
-| todo corría pero la pantalla seguía negra | `GPO32_VAL` bit 14 alimenta al Broadcom. Si está a 0, `lcd-video.c` cree que debe inicializar el BCM subiendo su firmware `vmcs` desde la NOR (que no tenemos), deja `display_on = false`, y **`lcd_update_rect()` descarta todos los dibujados sin decir nada** | `GPO32_VAL` arranca con `0x4000`, reproduciendo lo que deja el cargador de Apple |
+| loop reading `0x6000603c` | `PLL_STATUS` bit 31 = PLL locked. `system-pp502x.c`: `while (!(PLL_STATUS & 0x80000000));` | clock block at `0x60006000`, with bit 31 always set |
+| `Invalid write at 0xF0004000` | `cache_invalidate_special()` writes the cache's entire status array by hand, which was not mapped | RAM at `0xf0000000`–`0xf000efff` |
+| 20 M reads of `0x70000028` | bit 7 = the USB block came out of reset. `usb-fw-pp502x.c`: `while ((inl(0x70000028) & 0x80) == 0);`. That register **does not appear in `pp5020.h`** | `DEV_CTL` block at `0x70000000`, with bit 7 always set |
+| everything ran but the screen stayed black | `GPO32_VAL` bit 14 powers the Broadcom. If it is 0, `lcd-video.c` thinks it must initialize the BCM by uploading its `vmcs` firmware from the NOR (which we do not have), leaves `display_on = false`, and **`lcd_update_rect()` silently discards all drawing** | `GPO32_VAL` starts with `0x4000`, reproducing what Apple's loader leaves behind |
 
-La lección: en este SoC casi todo fallo se manifiesta igual — el emulador
-parece vivo, no hay ninguna excepción, y el firmware está esperando un bit.
-`-d unimp` con `sort | uniq -c | sort -rn` encuentra el bucle en segundos.
+The lesson: on this SoC almost every failure shows up the same way — the emulator
+looks alive, there is no exception at all, and the firmware is waiting for a bit.
+`-d unimp` with `sort | uniq -c | sort -rn` finds the loop in seconds.
 
-Ojo con `-d unimp`: cuando el guest entra en un bucle cerrado sobre un registro
-sin modelar, el log llega a decenas de millones de líneas y frena la emulación
-tanto que parece colgada. Conviene medir siempre sin `-d` antes de concluir que
-algo no avanza.
+Careful with `-d unimp`: when the guest enters a tight loop on an unmodeled
+register, the log reaches tens of millions of lines and slows emulation down
+so much that it looks hung. Always measure without `-d` before concluding that
+something is not progressing.
 
-### Rockbox arranca de verdad
+### Rockbox really boots
 
-Capturando la pantalla en varios instantes se ve que el `No partition found` no
-es el final, es el **segundo** fotograma:
+Capturing the screen at several moments shows that `No partition found` is not
+the end, it is the **second** frame:
 
-| t | Pantalla |
+| t | Screen |
 |---|---|
-| ~8 s | el **logo de arranque de Rockbox** a color: "ROCKBOX — open source jukebox firmware", "Ver. 4.0" (538 colores, 22 000 píxeles) |
-| ~20 s en adelante | `No partition found (0). Insert USB cable and fix it.` |
+| ~8 s | the **Rockbox boot logo** in color: "ROCKBOX — open source jukebox firmware", "Ver. 4.0" (538 colors, 22 000 pixels) |
+| ~20 s onward | `No partition found (0). Insert USB cable and fix it.` |
 
-O sea que la secuencia completa funciona: el bootloader monta el FAT32, carga
-`rockbox.ipod`, salta a él, y **la aplicación Rockbox arranca y dibuja su
-logo**. El error es del `disk_mount_all()` de la *app*, no del bootloader.
+In other words, the full sequence works: the bootloader mounts the FAT32, loads
+`rockbox.ipod`, jumps to it, and **the Rockbox application boots and draws its
+logo**. The error comes from the *app*'s `disk_mount_all()`, not from the bootloader.
 
-### El bloqueo real: la app usa DMA, el bootloader no
+### The real blocker: the app uses DMA, the bootloader does not
 
-`-trace "ide_*"` separa las dos fases sin ambigüedad:
+`-trace "ide_*"` separates the two phases unambiguously:
 
 ```
 # bootloader
 cmd 0xec  IDENTIFY
 cmd 0xef  SET FEATURES  (x2)
 cmd 0xc6  SET MULTIPLE MODE
-cmd 0xc4  READ MULTIPLE   <- x40, cargando rockbox.ipod
+cmd 0xc4  READ MULTIPLE   <- x40, loading rockbox.ipod
 # app
 cmd 0xec  IDENTIFY
 cmd 0xef  SET FEATURES  (x3)
 cmd 0xc6  SET MULTIPLE MODE
 cmd 0xec  IDENTIFY
-cmd 0xc8  READ DMA        <- y aqui se rompe
-ide_reset                 <- inmediatamente despues
+cmd 0xc8  READ DMA        <- and this is where it breaks
+ide_reset                 <- immediately afterwards
 cmd 0xec / 0xef / 0xc6 / 0xec / 0xe7 FLUSH CACHE
 ```
 
-Y el sector 0 solo se lee dos veces, las dos al principio: el
-`disk_mount_all()` de la app ni siquiera llega a `disk_init()`.
+And sector 0 is read only twice, both times at the start: the app's
+`disk_mount_all()` does not even reach `disk_init()`.
 
-`ipodvideo` define `HAVE_ATA_DMA`, así que la app pide **READ DMA (0xc8)**
-mientras que el bootloader se queda en PIO. Nosotros usamos el `mmio-ide`
-genérico de QEMU, que **no tiene motor de DMA**: la transferencia nunca ocurre,
-`ata_wait_intrq()` agota sus 10 segundos, el driver resetea el bus y se rinde.
+`ipodvideo` defines `HAVE_ATA_DMA`, so the app requests **READ DMA (0xc8)**
+whereas the bootloader stays in PIO. We were using QEMU's generic `mmio-ide`,
+which **has no DMA engine**: the transfer never happens,
+`ata_wait_intrq()` exhausts its 10 seconds, the driver resets the bus and gives up.
 
-Lo que descartamos por el camino (todo correcto, no tocar): la tabla de
-particiones de la imagen, el FAT32 (512 B/sector, 2 FATs, `FATsz32 = 4033`,
-`dataclusters ≈ 516190`, muy por encima del mínimo de 65525 de
-`fat_mount_internal`), y `BPB_HiddSec = 0`, que Rockbox no mira.
+What we ruled out along the way (all correct, do not touch): the image's
+partition table, the FAT32 (512 B/sector, 2 FATs, `FATsz32 = 4033`,
+`dataclusters ≈ 516190`, well above the minimum of 65525 in
+`fat_mount_internal`), and `BPB_HiddSec = 0`, which Rockbox does not look at.
 
-### Resuelto: motor de DMA del IDE del PP502x
+### Resolved: the PP502x IDE DMA engine
 
-En el PP502x el DMA no es bus-master PCI, son registros propios del bloque IDE.
-De `ata-target.h` y `ata-pp5020.c`:
+On the PP502x the DMA is not PCI bus-master; it is registers belonging to the IDE block.
+From `ata-target.h` and `ata-pp5020.c`:
 
-| Registro | Dirección | Función |
+| Register | Address | Function |
 |---|---|---|
-| `IDE0_CFG` | `0xC3000028` | bit 3 `INTRQ` (pendiente, se limpia escribiendo 1), bit 15 activo durante el DMA |
-| `IDE_DMA_CONTROL` | `0xC3000400` | bit 0 = **arranca**, bit 1 = arma, bit 3 = dirección (1 = lectura a memoria) |
-| `IDE_DMA_LENGTH` | `0xC3000408` | bytes **menos 4** |
-| `IDE_DMA_ADDR` | `0xC300040C` | dirección física destino |
+| `IDE0_CFG` | `0xC3000028` | bit 3 `INTRQ` (pending, cleared by writing 1), bit 15 active during DMA |
+| `IDE_DMA_CONTROL` | `0xC3000400` | bit 0 = **start**, bit 1 = arm, bit 3 = direction (1 = read to memory) |
+| `IDE_DMA_LENGTH` | `0xC3000408` | bytes **minus 4** |
+| `IDE_DMA_ADDR` | `0xC300040C` | destination physical address |
 
-La dirección y la longitud se programan **antes** del comando ATA y el bit de
-arranque **después**, así que `start_dma` solo puede guardar el callback que le
-pasa el núcleo IDE; es la escritura del bit 0 la que dispara la transferencia.
-Es el mismo reparto que usa el IDE bus-master de PCI, por el mismo motivo.
+The address and length are programmed **before** the ATA command and the start
+bit **after**, so `start_dma` can only store the callback the IDE core passes
+to it; it is the write of bit 0 that triggers the transfer.
+It is the same split that PCI bus-master IDE uses, for the same reason.
 
-Está en `hw/arm/ipod_video/ipod_video_ide.c`, un dispositivo `pp502x-ide` que
-se queda con toda la ventana `0xc3000000`–`0xc3000fff`: el task file, los
-registros de configuración y temporización, y el DMA. Sustituye al `mmio-ide`
-genérico más el stub que había al lado.
+It lives in `hw/arm/ipod_video/ipod_video_ide.c`, a `pp502x-ide` device that
+takes the whole `0xc3000000`–`0xc3000fff` window: the task file, the
+configuration and timing registers, and the DMA. It replaces the generic
+`mmio-ide` plus the stub that sat next to it.
 
-Una trampa que costó un ciclo: `ide_bus_init_output_irq()` **termina** con
-`bus->dma = &ide_dma_nop`. Si reclamas el bus antes de llamarla, se pierde sin
-ningún aviso y todos los comandos DMA se aceptan y se ignoran. Hay que
-asignarlo después.
+A trap that cost one cycle: `ide_bus_init_output_irq()` **ends** with
+`bus->dma = &ide_dma_nop`. If you claim the bus before calling it, the claim is lost
+without any warning and all DMA commands are accepted and ignored. It has to be
+assigned afterwards.
 
-`INTRQ` es un **pestillo**, no un espejo de la línea de interrupción: durante el
-DMA el firmware nunca lee el estado ATA (hacerlo "causes failures and hangs"),
-así que ese bit es su única señal de fin. Se pone en el flanco de subida y se
-borra escribiendo un uno.
+`INTRQ` is a **latch**, not a mirror of the interrupt line: during
+DMA the firmware never reads the ATA status (doing so "causes failures and hangs"),
+so that bit is its only end-of-transfer signal. It is set on the rising edge and
+cleared by writing a one.
 
-### El click wheel: dos cosas más
+### The click wheel: two more things
 
-Con el disco montado, Rockbox arrancaba entero pero no respondía a las teclas.
-En el PP la rueda es **por interrupción**, no por sondeo: `ipod_4g_button_read()`
-solo se llama desde `ipod_4g_button_int()`, y ni siquiera mira los datos si no
-hay un bit de estado puesto:
+With the disk mounted, Rockbox booted fully but did not respond to keys.
+On the PP the wheel is **interrupt-driven**, not polled: `ipod_4g_button_read()`
+is only called from `ipod_4g_button_int()`, and it does not even look at the data
+unless a status bit is set:
 
 ```c
 if ((inl(0x7000c104) & 0x04000000) != 0) {
     unsigned status = CLICKWHEEL_DATA;   /* 0x7000c140 */
     ...
 }
-/* y el handler reconoce con: */
+/* and the handler acknowledges with: */
 outl(inl(0x7000c104) | 0x0c000000, 0x7000c104);
 ```
 
-Así que una pulsación tiene que hacer dos cosas: poner el bit 26 de `0x7000c104`
-y levantar la interrupción de la rueda, que en este SoC es **la línea de I²C del
-banco alto** (`I2C_IRQ = 32+8`). Sin las dos, el firmware no lee la rueda jamás.
+So a press has to do two things: set bit 26 of `0x7000c104`
+and raise the wheel interrupt, which on this SoC is **the high-bank I²C
+line** (`I2C_IRQ = 32+8`). Without both, the firmware never reads the wheel.
 
-El giro va en el mismo paquete: bit 30 = rueda tocada, posición en los bits
-16..22, 96 clics por vuelta, el sentido horario incrementa. Rockbox exige
-`WHEEL_SENSITIVITY` (4) clics acumulados para mover la selección un ítem, así
-que cada evento de tecla avanza dos y una pulsación completa (presionar +
-soltar) mueve exactamente uno.
+Rotation goes in the same packet: bit 30 = wheel touched, position in bits
+16..22, 96 clicks per revolution, clockwise increments. Rockbox requires
+`WHEEL_SENSITIVITY` (4) accumulated clicks to move the selection by one item, so
+each key event advances two and a complete press (press +
+release) moves exactly one.
 
-## Estado: se navega el menú
+## Status: the menu can be navigated
 
-`tools/ipod_video/navtest.sh` lo comprueba solo: arranca, sale de *Now Playing*
-con MENU, gira la rueda y selecciona, capturando la pantalla en cada paso.
+`tools/ipod_video/navtest.sh` checks it on its own: it boots, leaves *Now Playing*
+with MENU, turns the wheel and selects, capturing the screen at each step.
 
-| Fotograma | Resultado |
+| Frame | Result |
 |---|---|
-| arranque | pantalla *Now Playing* con tema, carátula, barra de progreso y batería |
-| MENU | menú principal: Files / Database / Now Playing / Settings / Recording / Playlists / Plugins / System |
-| rueda horaria ×2 | la barra de selección baja de *Now Playing* a *Settings* y luego a *Recording* |
-| SELECT | entra en *Recording* (Time, Size, Volume −28 dB, Gain) |
-| rueda antihoraria ×3 | la selección vuelve a subir |
+| boot | *Now Playing* screen with theme, cover art, progress bar and battery |
+| MENU | main menu: Files / Database / Now Playing / Settings / Recording / Playlists / Plugins / System |
+| wheel clockwise ×2 | the selection bar moves down from *Now Playing* to *Settings* and then to *Recording* |
+| SELECT | enters *Recording* (Time, Size, Volume −28 dB, Gain) |
+| wheel counterclockwise ×3 | the selection moves back up |
 
-Detalle real, no fallo del modelo: **la primera pulsación después de cambiar de
-sentido no mueve nada**. Rockbox reinicia su acumulador al cambiar de
-dirección, así que se come esos cuatro clics. Se ve en las cifras del test: el
-fotograma siguiente al cambio de sentido difiere ~2 300 píxeles (solo el ticker
-del título, que se desplaza solo) y el siguiente ya ~14 000 (la barra movida).
+A real detail, not a model bug: **the first press after changing
+direction moves nothing**. Rockbox resets its accumulator when the direction
+changes, so it swallows those four clicks. You can see it in the test figures: the
+frame after the change of direction differs by ~2 300 pixels (only the title
+ticker, which scrolls on its own) and the next one by ~14 000 already (the moved bar).
 
-Ojo con eso al medir: la pantalla *Now Playing* se anima sola, así que una
-diferencia pequeña de píxeles **no prueba nada**. Solo vale la barra movida.
+Watch out for that when measuring: the *Now Playing* screen animates by itself, so a
+small pixel difference **proves nothing**. Only the moved bar counts.
 
-### Lo que sigue sin modelar
+### What remains unmodeled
 
-> **Corregido el 2026-08-09**: esta lista abría con *"El COP: como nuestro
-> `sleep_core` no duerme, el CPU sigue y arranca igual"*. Dejó de ser cierto en
-> el commit `9d823ec76`: hay **dos** núcleos ARM y los dos se duermen y
-> despiertan de verdad. El buzón CPU-COP de `0x60001000` sí sigue sin modelar.
+> **Corrected on 2026-08-09**: this list opened with *"The COP: since our
+> `sleep_core` does not sleep, the CPU continues and boots anyway"*. That stopped being true in
+> commit `9d823ec76`: there are **two** ARM cores and both genuinely sleep and
+> wake up. The CPU-COP mailbox at `0x60001000` does remain unmodeled.
 
-- **Audio.** El I²S y el códec no están; la reproducción no suena.
-- **El buzón CPU-COP** de `0x60001000`, que cae en el suelo de `-d unimp`.
-- **Escritura por DMA.** Solo se ha ejercitado la lectura. El camino de
-  escritura está implementado pero no probado.
-- **La rueda no genera "untouch"**: una vez tocada se queda tocada.
+- **Audio.** The I²S and the codec are not there; playback makes no sound.
+- **The CPU-COP mailbox** at `0x60001000`, which falls on the floor of `-d unimp`.
+- **DMA writes.** Only reads have been exercised. The write path
+  is implemented but untested.
+- **The wheel does not generate "untouch"**: once touched it stays touched.
 
-## El retailOS de Apple: de pantalla negra a núcleo arrancado
+## Apple's retailOS: from black screen to booted kernel
 
-Con `-M iPod-Video,entry=0` el firmware original de Apple pasó de morir en la
-instrucción 289 a ejecutar 5175 bloques, arrancar su núcleo, levantar sus dos
-núcleos y entrar en el bucle de reposo de su planificador. **La pantalla sigue
-negra**, y ahora sabemos exactamente por qué.
+With `-M iPod-Video,entry=0` Apple's original firmware went from dying at
+instruction 289 to executing 5175 blocks, booting its kernel, bringing up its two
+cores and entering its scheduler's idle loop. **The screen is still
+black**, and now we know exactly why.
 
-### Lo primero: no estaba callado, estaba entrando en pánico
+### First: it was not silent, it was panicking
 
-La dirección donde acababan todas las trazas, `0xe9b98`, no era "la primera
-llamada al sistema del firmware". Es el impresor de pánico de la librería C de
-ARM. La instrucción de encima lo delata:
+The address where all traces ended, `0xe9b98`, was not "the firmware's first
+system call". It is the ARM C library's panic printer. The instruction above
+gives it away:
 
 ```
 e9b94:  mov r0, #4          @ SYS_WRITE0
 e9b98:  svc 0x123456
 ```
 
-y la tabla de cadenas justo arriba contiene `"Type: "`, `"undefined
-instruction"`, `"data abort"`, `"_sys_exit"`, `"CPU "`, `"Task"`. Con
-semihosting activado, el firmware dice él mismo de qué se muere. La máquina lo
-activa por defecto; `-M iPod-Video,semihosting=off` lo desactiva.
+and the string table just above contains `"Type: "`, `"undefined
+instruction"`, `"data abort"`, `"_sys_exit"`, `"CPU "`, `"Task"`. With
+semihosting enabled, the firmware itself says what it is dying of. The machine
+enables it by default; `-M iPod-Video,semihosting=off` disables it.
 
-**Se retira** la hipótesis de que el retailOS moría en una llamada al sistema, y
-con ella la de que la IRAM vacía era la causa: los manejadores los instala el
-propio `osos` en `0x2a0`, unos 150 bloques *después* del punto de muerte.
+**Retracted**: the hypothesis that the retailOS died in a system call, and
+with it the one that the empty IRAM was the cause: the handlers are installed by
+the `osos` itself at `0x2a0`, some 150 blocks *after* the point of death.
 
-### Los tres muros, en orden
+### The three walls, in order
 
-| # | Muro | Diagnóstico | Arreglo |
+| # | Wall | Diagnosis | Fix |
 |---|---|---|---|
-| 1 | `svc 0x123456` sin manejador | es el impresor de pánico, no una syscall | responder al semihosting |
-| 2 | data abort en `0x84390` leyendo `0x0471619c` | **el bit 26 de la dirección no lo decodifica el controlador de SDRAM**: toda dirección de DRAM tiene gemela 0x04000000 más arriba | alias de DRAM en `0x04000000` y `0x14000000` |
-| 3 | data abort en `0x2668e4` sobre un objeto nulo | falta el **bloque SysInfo** que deja la ROM de arranque en lo alto de la IRAM | escribir el tag, el puntero y tres campos |
+| 1 | `svc 0x123456` without a handler | it is the panic printer, not a syscall | respond to semihosting |
+| 2 | data abort at `0x84390` reading `0x0471619c` | **bit 26 of the address is not decoded by the SDRAM controller**: every DRAM address has a twin 0x04000000 higher | DRAM aliases at `0x04000000` and `0x14000000` |
+| 3 | data abort at `0x2668e4` on a null object | the **SysInfo block** that the boot ROM leaves at the top of IRAM is missing | write the tag, the pointer and three fields |
 
-#### El bit 26
+#### Bit 26
 
-Lo dice la propia tabla de scatter-load del firmware, en
-`0x84040..0x840a8`. Orígenes y destinos van en una tirada contigua del fichero
-y en mitad de esa tirada la dirección salta exactamente `0x04000000`:
+The firmware's own scatter-load table says so, at
+`0x84040..0x840a8`. Sources and destinations come in a contiguous run of the file
+and in the middle of that run the address jumps by exactly `0x04000000`:
 
 ```
-src 0x006c9a64 + len 0x0004c734 = 0x00716198 ; siguiente src = 0x0471619c
-dst 0x1493690c + len 0x0004c734 = 0x14983040 ; siguiente dst = 0x14983040
+src 0x006c9a64 + len 0x0004c734 = 0x00716198 ; next src = 0x0471619c
+dst 0x1493690c + len 0x0004c734 = 0x14983040 ; next dst = 0x14983040
 ```
 
-Una discontinuidad de un bit dentro de una serie de offsets consecutivos no es
-un cambio de dirección: es la misma dirección con una bandera. Lo confirma el
-contenido: el offset `0x7161a4` del fichero es `e1b0f00e`, `movs pc, lr`; la
-copia de `0x83848` lo deja en `0x40000008`, que es justo a donde apunta el
-literal del vector SWI en `0xec`. Encaja al byte.
+A one-bit discontinuity within a series of consecutive offsets is not a
+change of address: it is the same address with a flag. The contents confirm it:
+file offset `0x7161a4` is `e1b0f00e`, `movs pc, lr`; the copy at
+`0x83848` leaves it at `0x40000008`, which is exactly where the
+SWI vector literal at `0xec` points. It fits to the byte.
 
-Lo **inferido** es qué significa el bit para el hardware. La unidad de remap
-apunta en la misma dirección: MMAP1 se programa con lógico `0x00003a00` /
-físico `0x10000f84`, y comparando esa máscara con las dos que usa
-`crt0-pp.S` de Rockbox (`0x3e00` para una ventana de 32 MB, `0x3c00` para
-64 MB) sale que el bit *k* de la máscara cubre el bit *k+16* de la dirección
-— o sea que los bits 26 y 27 llegan intactos al bus físico. Alguien más abajo
-tiene que estar ignorando el bit 26, y el único candidato es el controlador de
-memoria.
+What is **inferred** is what the bit means to the hardware. The remap unit
+points the same way: MMAP1 is programmed with logical `0x00003a00` /
+physical `0x10000f84`, and comparing that mask with the two that Rockbox's
+`crt0-pp.S` uses (`0x3e00` for a 32 MB window, `0x3c00` for
+64 MB) shows that bit *k* of the mask covers bit *k+16* of the address
+— that is, bits 26 and 27 reach the physical bus intact. Something further down
+has to be ignoring bit 26, and the only candidate is the memory
+controller.
 
-#### El bloque SysInfo
+#### The SysInfo block
 
-`ipodloader2/ipodhw.c` de iPodLinux nombra las direcciones y comenta que *"los
-últimos 256 bytes parecen usarlos la Flash ROM para cosas especiales"*:
+iPodLinux's `ipodloader2/ipodhw.c` names the addresses and comments that *"the
+last 256 bytes seem to be used by the Flash ROM for special things"*:
 
 ```c
 #define SYSINFO_TAG_PP5022 0x4001ff18
 #define SYSINFO_PTR_PP5022 0x4001ff1c
 ```
 
-El firmware de Apple coincide al byte: `0x1084` reparte globales en
-`IRAM_END - 0x100 + N`, y `0x13bc` pide `N = 24`, compara la palabra de ahí
-contra `0x53797349` (`"IsyS"`) y toma un puntero de `+4`. Nada en la imagen
-escribe ninguna de las dos palabras — la constante mágica la carga **una sola
-instrucción** en siete megabytes y solo para compararla — así que las dejó la
-ROM que nos saltamos, igual que el bit 14 de `GPO32_VAL`.
+Apple's firmware matches to the byte: `0x1084` lays out globals at
+`IRAM_END - 0x100 + N`, and `0x13bc` asks for `N = 24`, compares the word there
+against `0x53797349` (`"IsyS"`) and takes a pointer from `+4`. Nothing in the image
+writes either of the two words — the magic constant is loaded by **a single
+instruction** in seven megabytes and only to compare it — so they were left by the
+ROM we skip, just like bit 14 of `GPO32_VAL`.
 
-Sin el bloque se rompen dos cosas, y la segunda solo se vio al arreglar la
-primera:
+Without the block two things break, and the second only became visible once the
+first was fixed:
 
-- **El tamaño de RAM.** `0x13e8` lee `SysInfo+0xe0` como cuenta de bytes y
-  `0xe6c` la redondea contra la tabla de `0x16d8` al tamaño del banco 2. Con el
-  puntero nulo esa lectura va a `[0x000000e0]`, que tras el remap es una
-  palabra de la propia tabla de vectores, `0x00000100`; 256 bytes redondean a
-  cero, los cuatro bancos salen vacíos y salta el assert de `0xda0`. Lo
-  llamativo: el firmware ya traía la respuesta buena — `0x1f4` hace
-  `mov fp, #0x700`, cuyo nibble 2 indexa la misma tabla a `0x02000000`, los
-  32 MB de un 5G — y la tira.
-- **El identificador de hardware.** Esto es lo que el análisis previo tenía al
-  revés. Dejar el tag a cero parece inocuo, porque `0x13e8` desreferencia el
-  puntero *antes* de que `0x1400` compruebe la magia. Pero `0x140c` solo
-  publica el puntero en `0x4000608c` si la magia cuadró, y esa palabra sí
-  importa:
+- **The RAM size.** `0x13e8` reads `SysInfo+0xe0` as a byte count and
+  `0xe6c` rounds it against the table at `0x16d8` to the size of bank 2. With the
+  null pointer that read goes to `[0x000000e0]`, which after the remap is a
+  word of the vector table itself, `0x00000100`; 256 bytes round to
+  zero, all four banks come out empty and the assert at `0xda0` fires. The
+  striking part: the firmware already had the right answer — `0x1f4` does
+  `mov fp, #0x700`, whose nibble 2 indexes the same table to `0x02000000`, the
+  32 MB of a 5G — and throws it away.
+- **The hardware identifier.** This is what the earlier analysis had
+  backwards. Leaving the tag at zero seems harmless, because `0x13e8` dereferences the
+  pointer *before* `0x1400` checks the magic. But `0x140c` only
+  publishes the pointer at `0x4000608c` if the magic matched, and that word does
+  matter:
 
   ```
   0x2b8   bl 0x1658    memcpy(0x14983060, 0x40006000, 0x90)
-  0x2bc   bl 0x281224  lee [0x149830ec]; si es nulo vuelve al instante, y si no
-                       copia min(len,248) bytes a 0x108710dc y lo instala como
-                       el singleton de información de hardware
-  0x2d0   bl 0x2668c4 -> 0x111c58 -> 0x2653a4 -> 0x265164, que lee +0x84
+  0x2bc   bl 0x281224  reads [0x149830ec]; if null it returns at once, otherwise
+                       copies min(len,248) bytes to 0x108710dc and installs it as
+                       the hardware information singleton
+  0x2d0   bl 0x2668c4 -> 0x111c58 -> 0x2653a4 -> 0x265164, which reads +0x84
   ```
 
-  Con el tag a cero `0x281224` no hace nada, `0x265164` lee `+0x84` de un
-  objeto en bss que nadie rellenó y saca cero, la tabla de saltos de
-  `0x2653a4` responde "no conozco esa máquina", `0x111c58` devuelve un driver
-  nulo y `0x2668e4` lo desreferencia.
+  With the tag at zero `0x281224` does nothing, `0x265164` reads `+0x84` of an
+  object in bss that nobody filled in and gets zero, the jump table at
+  `0x2653a4` answers "I don't know that machine", `0x111c58` returns a null
+  driver and `0x2668e4` dereferences it.
 
-Se escriben **cuatro campos y ni uno más**: la magia en `0x4001ff18`, la
-longitud en `+0x04`, el identificador de hardware en `+0x84` (que es
-`IPOD_VIDEO_HW_REVISION`, el valor que esta máquina ya declaraba, sacado del
-aparato real por la pantalla de HW info de Rockbox — su mitad alta, `0x000b`,
-es la entrada 11 de la tabla de Apple, viva) y el tamaño de SDRAM en `+0xe0`.
-El resto queda a cero: el número de serie, el GUID de FireWire, el nombre de
-placa y las revisiones de imagen no los sabemos, y el `sysinfo_t` de iPodLinux
-**no sirve como fuente** — pone `sdram_size` en `+0x80` mientras este firmware
-lee `+0xe0`, que cae dentro de un `pad` que iPodLinux nunca decodificó.
+**Four fields and not one more** are written: the magic at `0x4001ff18`, the
+length at `+0x04`, the hardware identifier at `+0x84` (which is
+`IPOD_VIDEO_HW_REVISION`, the value this machine already declared, taken from the
+real device via Rockbox's HW info screen — its high half, `0x000b`,
+is entry 11 of Apple's table, live) and the SDRAM size at `+0xe0`.
+The rest stays at zero: the serial number, the FireWire GUID, the board
+name and the image revisions are unknown to us, and iPodLinux's `sysinfo_t`
+**is not usable as a source** — it puts `sdram_size` at `+0x80` whereas this firmware
+reads `+0xe0`, which falls inside a `pad` that iPodLinux never decoded.
 
-### Dónde se quedaba: el PMU (resuelto, 2026-08-09)
+### Where it got stuck: the PMU (resolved, 2026-08-09)
 
-El sistema está **vivo**, no colgado:
+The system is **alive**, not hung:
 
-- ambos núcleos ejecutan (el CPU en el driver de I²C, el COP girando sobre un
-  cerrojo en `0x40000fac`),
-- se toman ~700 interrupciones por segundo,
-- se recorre toda la secuencia de reset (`0x2668c4`, `0x276fe8`, `0xbbdc4`,
-  `0x330`) y se llega al `main` del OS en `0xaf468`,
-- el planificador entra en su bucle de reposo en `0x285730`.
+- both cores execute (the CPU in the I²C driver, the COP spinning on a
+  lock at `0x40000fac`),
+- ~700 interrupts per second are taken,
+- the whole reset sequence is traversed (`0x2668c4`, `0x276fe8`, `0xbbdc4`,
+  `0x330`) and the OS `main` at `0xaf468` is reached,
+- the scheduler enters its idle loop at `0x285730`.
 
-Y el CPU se pasa el resto del tiempo en el bloque de I²C de `0x7000c000`,
-repitiendo eternamente esta transacción:
+And the CPU spends the rest of its time in the I²C block at `0x7000c000`,
+repeating this transaction forever:
 
 ```
-CTRL=0x80  ADDR=0x10  DATA0=0x30    escribir el puntero de registro 0x30
-CTRL=0x80  ADDR=0x11                 direccionar para lectura
-CTRL=0xa2  ADDR=0x11                 leer 2 bytes  (0xa2 = SEND | lectura | len 2)
+CTRL=0x80  ADDR=0x10  DATA0=0x30    write register pointer 0x30
+CTRL=0x80  ADDR=0x11                 address for reading
+CTRL=0xa2  ADDR=0x11                 read 2 bytes  (0xa2 = SEND | read | len 2)
 ```
 
-Dirección `0x10` >> 1 = **`0x08`, el PCF50605**, el chip de gestión de energía
-(`i2c_readbytes(0x08, ...)` en `pcf50605.c` de Rockbox). Registro **`0x30` =
-`ADCS1`**, y leyendo dos bytes se lleva también `ADCS2`: son los **registros de
-resultado del conversor A/D**, o sea la medida de la batería.
+Address `0x10` >> 1 = **`0x08`, the PCF50605**, the power management chip
+(`i2c_readbytes(0x08, ...)` in Rockbox's `pcf50605.c`). Register **`0x30` =
+`ADCS1`**, and reading two bytes also takes `ADCS2`: these are the **A/D converter
+result registers**, i.e. the battery measurement.
 
-El mapa del bloque, de `i2c-pp.c`:
+The block's map, from `i2c-pp.c`:
 
-| Registro | Offset | Bits |
+| Register | Offset | Bits |
 |---|---|---|
-| `I2C_CTRL` | `+0x00` | bit 7 `SEND`, bit 5 = lectura, bits 2:1 = longitud−1 |
-| `I2C_ADDR` | `+0x04` | dirección de 7 bits desplazada, bit 0 = lectura |
+| `I2C_CTRL` | `+0x00` | bit 7 `SEND`, bit 5 = read, bits 2:1 = length−1 |
+| `I2C_ADDR` | `+0x04` | shifted 7-bit address, bit 0 = read |
 | `I2C_DATA0..3` | `+0x0c`,`+0x10`,`+0x14`,`+0x18` | |
-| `I2C_STATUS` | `+0x1c` | bit 6 `BUSY`; el driver de Apple lee además los bits 2:0 como código de resultado (`0x282f40`) |
+| `I2C_STATUS` | `+0x1c` | bit 6 `BUSY`; Apple's driver also reads bits 2:0 as a result code (`0x282f40`) |
 
-Hoy el bloque es un fichero de registros: `STATUS` siempre lee cero, así que
-toda transacción "termina" al instante y con éxito, y el firmware se lleva de
-vuelta lo último que él mismo escribió. Rockbox sobrevive a eso porque su
-driver lee lo que haya y sigue; el de Apple se queda dando vueltas.
+Today the block is a register file: `STATUS` always reads zero, so
+every transaction "completes" instantly and successfully, and the firmware gets
+back the last thing it wrote itself. Rockbox survives that because its
+driver reads whatever is there and moves on; Apple's keeps spinning.
 
-**El siguiente paso, acotado:** modelar el controlador I²C del PP502x y colgar
-de él un PCF50605 en la dirección `0x08` que al menos responda `ADCS1`/`ADCS2`.
-El mapa de registros del PMU está en
-`assets/rockbox/firmware/export/pcf5060x.h`. Lo que **no** tenemos es la escala
-del ADC ni los valores que el retailOS considera aceptables, así que ese
-número habrá que sacarlo de cómo lo interpreta el firmware, no inventarlo.
+**The next step, scoped:** model the PP502x I²C controller and hang
+off it a PCF50605 at address `0x08` that at least answers `ADCS1`/`ADCS2`.
+The PMU register map is in
+`assets/rockbox/firmware/export/pcf5060x.h`. What we do **not** have is the ADC
+scale or the values the retailOS considers acceptable, so that
+number will have to be derived from how the firmware interprets it, not invented.
 
-Queda por comprobar, y no está descartado, que la lectura de la batería sea el
-único bloqueo: puede haber más consumidores del PMU detrás.
+It remains to be checked, and it is not ruled out, that the battery reading is the
+only blocker: there may be more PMU consumers behind it.
 
-## El retailOS arranca del todo (2026-08-09)
+## The retailOS boots all the way (2026-08-09)
 
-Con el I²C y el PMU modelados —más dos muros que aparecieron detrás— el
-retailOS deja de bloquearse: termina su arranque, entra en el bucle de reposo
-del planificador y no imprime ni un pánico. **La pantalla sigue negra**, y
-ahora se sabe exactamente qué falta y por qué.
+With the I²C and the PMU modeled —plus two walls that showed up behind them— the
+retailOS stops hanging: it finishes booting, enters the scheduler's idle loop
+and prints not a single panic. **The screen is still black**, and now we know
+exactly what is missing and why.
 
-Capturas a los 10, 30, 60 y 90 s: **0 píxeles encendidos en las cuatro**. Sin
-adornos: el retailOS no dibuja.
+Screenshots at 10, 30, 60 and 90 s: **0 pixels lit in all four**. No
+embellishment: the retailOS does not draw.
 
-### Los tres muros de esta sesión
+### The three walls of this session
 
-| # | Muro | Cómo se encontró | Arreglo |
+| # | Wall | How it was found | Fix |
 |---|---|---|---|
-| 1 | bucle infinito leyendo `ADCS2` del PCF50605 | ya estaba acotado | controlador I²C `pp502x-i2c` + esclavo `pcf50605` |
-| 2 | data abort leyendo `0x93EE1B70` | el propio firmware lo imprime por semihosting, en bucle | DRAM también responde con el bit 31 puesto |
-| 3 | bucle sobre el bit 6 de `BCM_ALT_CONTROL` | `info registers` en el monitor: `R01=0x30070000` | los dos bits del *handshake* de arranque del Broadcom |
+| 1 | infinite loop reading `ADCS2` of the PCF50605 | already narrowed down | I²C controller `pp502x-i2c` + `pcf50605` slave |
+| 2 | data abort reading `0x93EE1B70` | the firmware itself prints it via semihosting, in a loop | DRAM also responds with bit 31 set |
+| 3 | loop on bit 6 of `BCM_ALT_CONTROL` | `info registers` in the monitor: `R01=0x30070000` | the two bits of the Broadcom's boot *handshake* |
 
-#### 1. El I²C y el PMU
+#### 1. The I²C and the PMU
 
-El bloqueo era `pmu_adc_read` (`0x28341c`) girando **sin timeout** sobre el bit
-7 de `ADCS2`, el "conversión lista" del PCF50605. Hasta ahora `0x7000c000` era
-un fichero de registros plano, así que toda transacción "funcionaba" y devolvía
-el último byte que el propio firmware había escrito.
+The hang was `pmu_adc_read` (`0x28341c`) spinning **without a timeout** on bit
+7 of `ADCS2`, the PCF50605's "conversion ready". Until now `0x7000c000` was
+a flat register file, so every transaction "worked" and returned
+the last byte the firmware itself had written.
 
-Dos dispositivos nuevos, `hw/arm/ipod_video/ipod_video_i2c.c` y
-`ipod_video_pcf50605.c`. Los detalles del bloque están en
-[07-pp502x-hardware.md](07-pp502x-hardware.md). Lo que conviene retener:
+Two new devices, `hw/arm/ipod_video/ipod_video_i2c.c` and
+`ipod_video_pcf50605.c`. The details of the block are in
+[07-pp502x-hardware.md](07-pp502x-hardware.md). What is worth keeping in mind:
 
-- **El firmware de Apple lee `STATUS[2:0]` como código de error** y aborta la
-  transacción entera si no es cero. Rockbox no lo mira. Un fichero de
-  registros plano lo cumplía por accidente.
-- **El bit de arranque tiene que autoborrarse.** No es una suposición: todos
-  los pasos siguientes de los dos drivers son lecturas-modificación-escritura
-  de `CTRL`, así que un bit que se quedara puesto dispararía una segunda
-  transferencia no pedida en la siguiente, y contra un esclavo con puntero de
-  registro autoincremental eso lee bytes equivocados para siempre.
-- **El bloque tiene que funcionar sin inicialización.** La rutina de
-  `DEV_EN`/`DEV_RS` de Apple (`0x282e98`) solo se alcanza cuando una
-  transferencia expira; si `STATUS` nunca dice `BUSY`, el guest nunca habilita
-  el bloque.
+- **Apple's firmware reads `STATUS[2:0]` as an error code** and aborts the
+  entire transaction if it is not zero. Rockbox does not look at it. A flat
+  register file satisfied this by accident.
+- **The start bit has to self-clear.** This is not an assumption: every
+  subsequent step of both drivers is a read-modify-write of `CTRL`, so a bit
+  that stayed set would fire a second, unrequested transfer on the next one,
+  and against a slave with an auto-incrementing register pointer that reads
+  the wrong bytes forever.
+- **The block has to work without initialization.** Apple's `DEV_EN`/`DEV_RS`
+  routine (`0x282e98`) is only reached when a transfer times out; if `STATUS`
+  never says `BUSY`, the guest never enables the block.
 
-**Los valores del ADC, y de dónde sale cada uno** — esto es lo que la regla de
-"no inventar" exigía:
+**The ADC values, and where each one comes from** — this is what the "don't
+make things up" rule demanded:
 
-| Entrada del mux | Valor | Justificación |
+| Mux input | Value | Justification |
 |---|---|---|
-| 2, `ADCIN1_RES` (batería de Rockbox) | 682 | Rockbox lo convierte a milivoltios con su propio `BATTERY_SCALE_FACTOR` de 6000 por 1024 cuentas, así que son 4000 mV. Su tabla del iPod Video pone el 0 % en 3600 mV y el 100 % en 4180. Rockbox muestra ahora **77 %**, que es exactamente lo que da interpolar 3996 mV en esa tabla |
-| 3, `ADCIN1_SUBTR` (batería de Apple) | 390 | **SUPUESTO**, pero dentro de un rango que define el firmware: `0x264ee8` busca la cuenta cruda en una tabla de quince umbrales (283…454) y devuelve el índice, y `0x264cb0` no enciende un raíl por debajo del literal `0x12a` = 298 de `0x264d20`. 390 cae entre el décimo y el undécimo umbral, lejos de los dos extremos. **Cuántos voltios son, no se sabe, y nada depende de saberlo** |
-| 4 y 7, identificadores de accesorio | fondo de escala | `0x266034` toma los cuatro bits altos como cubeta y convierte la cubeta 15 en el código 100, que es el valor con el que la tarea `"RsistrAccsryMgr"` (`0xfec04`) se inicializa. Una línea de identificación sin nada enchufado está en circuito abierto y lee fondo de escala, que es esa misma cubeta. Las dos cosas coinciden |
-| el resto | fondo de escala | con `LOG_UNIMP` diciéndolo |
+| 2, `ADCIN1_RES` (Rockbox battery) | 682 | Rockbox converts it to millivolts with its own `BATTERY_SCALE_FACTOR` of 6000 per 1024 counts, so it is 4000 mV. Its iPod Video table puts 0 % at 3600 mV and 100 % at 4180. Rockbox now shows **77 %**, which is exactly what interpolating 3996 mV in that table gives |
+| 3, `ADCIN1_SUBTR` (Apple battery) | 390 | **ASSUMED**, but within a range the firmware defines: `0x264ee8` looks up the raw count in a table of fifteen thresholds (283…454) and returns the index, and `0x264cb0` does not turn on a rail below the literal `0x12a` = 298 at `0x264d20`. 390 falls between the tenth and eleventh thresholds, far from both ends. **How many volts it is, is not known, and nothing depends on knowing it** |
+| 4 and 7, accessory identifiers | full scale | `0x266034` takes the four high bits as a bucket and converts bucket 15 into code 100, which is the value the `"RsistrAccsryMgr"` task (`0xfec04`) is initialized with. An identification line with nothing plugged in is open-circuit and reads full scale, which is that same bucket. The two things agree |
+| the rest | full scale | with `LOG_UNIMP` saying so |
 
-**SUPUESTO y marcado como tal en el código**: el registro `ID` (`0x00`) devuelve
-`0x00`. Ninguna fuente —Rockbox, iPodLinux, la cabecera de OpenMoko sacada del
-datasheet— dice qué contesta un PCF50605 real. Lo único que el firmware
-necesita es que **no sea `0x24`**, que es con lo que `0x283704` decide cambiarse
-al mapa de registros de otro chip. Se elige el cero justamente porque no añade
-información que no tenemos.
+**ASSUMED and marked as such in the code**: the `ID` register (`0x00`) returns
+`0x00`. No source —Rockbox, iPodLinux, the OpenMoko header taken from the
+datasheet— says what a real PCF50605 answers. All the firmware
+needs is for it **not to be `0x24`**, which is what `0x283704` uses to decide to
+switch to another chip's register map. Zero is chosen precisely because it adds
+no information we don't have.
 
-**Rockbox no ha regresado, pero sí ha cambiado**, y es un arreglo, no un daño:
-ahora arranca en su menú principal en vez de entrar directamente en *Now
-Playing*. `rtc_check_alarm_started()` de `rtc_pcf50605.c` decide que la alarma
-despertó al aparato si el reloj y los registros de alarma coinciden dentro de
-diez segundos. Sin RTC las dos lecturas devolvían lo mismo, así que Rockbox
-creía que había sonado una alarma y arrancaba la reproducción **en todos los
-arranques**. Con un reloj de verdad no coinciden y hace lo normal. Las capturas
-de `assets/nav-baseline` están actualizadas; la navegación en sí no cambia (la
-barra sigue moviéndose ~12 000 píxeles por paso de rueda y SELECT sigue
-entrando).
+**Rockbox has not regressed, but it has changed**, and it is a fix, not damage:
+it now boots into its main menu instead of going straight into *Now
+Playing*. `rtc_check_alarm_started()` in `rtc_pcf50605.c` decides that the alarm
+woke the device if the clock and the alarm registers match within
+ten seconds. Without an RTC both reads returned the same thing, so Rockbox
+believed an alarm had gone off and started playback **on every
+boot**. With a real clock they do not match and it does the normal thing. The
+screenshots in `assets/nav-baseline` are updated; navigation itself does not
+change (the bar still moves ~12 000 pixels per wheel step and SELECT still
+enters).
 
-#### 2. El bit 31: la vista sin caché de la DRAM
+#### 2. Bit 31: the uncached view of DRAM
 
-Pasado el PMU, el firmware daba un data abort leyendo `0x93EE1B70` —DRAM que
-él mismo acababa de reservar, `0x13EE1B70`, con el bit 31 pegado— y lo imprimía
-por semihosting en bucle.
+Past the PMU, the firmware took a data abort reading `0x93EE1B70` —DRAM that
+it had just allocated itself, `0x13EE1B70`, with bit 31 stuck on— and printed it
+via semihosting in a loop.
 
-Este muro **se explica solo**, no hay que inferirlo. Diez constructores de
-buffer comparten un idioma: `0x22131c` y nueve del módulo de reserva
+This wall **explains itself**; there is no need to infer it. Ten buffer
+constructors share an idiom: `0x22131c` and nine from the allocation module
 (`0x28c8fc`, `0x28c9dc`, `0x28cab4`, `0x28cb80`, `0x28cca8`, `0x28cd74`,
-`0x28ce0c`, `0x28ced0`, `0x28d0ec`). Desde `0x28cebc`:
+`0x28ce0c`, `0x28ced0`, `0x28d0ec`). From `0x28cebc`:
 
 ```
-str  r0, [r4, #4]         ; el puntero alineado
-ldrb r1, [r4, #12]        ; "el llamante dice que ya es sin caché"
+str  r0, [r4, #4]         ; the aligned pointer
+ldrb r1, [r4, #12]        ; "the caller says it is already uncached"
 cmp  r1, #0
 bne  fin
 mov  r1, #4
-cmp  r1, r0, lsr #28      ; nibble alto 4, o sea IRAM?
-beq  fin                  ; entonces no tocarlo
-orr  r0, r0, #0x80000000  ; si no, así es como se usa el buffer
+cmp  r1, r0, lsr #28      ; high nibble 4, i.e. IRAM?
+beq  fin                  ; then leave it alone
+orr  r0, r0, #0x80000000  ; otherwise, this is how the buffer is used
 str  r0, [r4, #4]
 ...
-bl   0x9aa18              ; sobre [ptr - holgura, ptr + tamaño + holgura]
+bl   0x9aa18              ; over [ptr - slack, ptr + size + slack]
 ```
 
-**La excepción es lo que identifica el bit.** La IRAM es la única memoria de
-este chip que nunca se cachea, y es exactamente la que el firmware no marca.
-Rockbox dice lo mismo en C, con otra constante porque su vista cacheada vive en
-otro sitio: `system-target.h:164`, `UNCACHED_ADDR(a) = a | UNCACHED_BASE_ADDR`.
+**The exception is what identifies the bit.** IRAM is the only memory on
+this chip that is never cached, and it is exactly the one the firmware does not
+mark. Rockbox says the same thing in C, with a different constant because its
+cached view lives elsewhere: `system-target.h:164`,
+`UNCACHED_ADDR(a) = a | UNCACHED_BASE_ADDR`.
 
-Cómo se localizó, y el método vale la pena: **punto de ruptura en el `memcpy`
-del firmware (`0xf0`) a través del gdbstub de QEMU**, preguntando quién pasa un
-puntero de origen con el bit 31. Respuesta: `0x21701c`, una copia de 512 bytes
-sacada de un buffer de bloque de disco de 32 KB cuyo descriptor, en
-`0x13ee9b90`, guarda la reserva cruda en `+0` y esa misma dirección con el bit
-31 en `+4`. Después, un **watchpoint de escritura** sobre esa palabra, que cae
-justo en el constructor de arriba.
+How it was located, and the method is worth it: **a breakpoint on the firmware's
+`memcpy` (`0xf0`) through QEMU's gdbstub**, asking who passes a
+source pointer with bit 31. Answer: `0x21701c`, a 512-byte copy
+taken from a 32 KB disk block buffer whose descriptor, at
+`0x13ee9b90`, stores the raw allocation at `+0` and that same address with bit
+31 at `+4`. Then a **write watchpoint** on that word, which lands
+right in the constructor above.
 
-Como aquí no hay caché, cacheado y sin cachear son la misma memoria: un alias,
-igual que el gemelo del bit 26 que ya estaba al lado.
+Since there is no cache here, cached and uncached are the same memory: an alias,
+just like the bit 26 twin that was already next to it.
 
-#### 3. El Broadcom: el *handshake* de arranque
+#### 3. The Broadcom: the boot *handshake*
 
-Con eso el retailOS llega al chip de vídeo y se queda en `0x2876dc` esperando
-el bit 6 de `BCM_ALT_CONTROL`. Es la segunda mitad del arranque del Broadcom
-que Rockbox también hace (`lcd-video.c:559-560`):
+With that, the retailOS reaches the video chip and sits at `0x2876dc` waiting
+for bit 6 of `BCM_ALT_CONTROL`. It is the second half of the Broadcom boot
+that Rockbox also does (`lcd-video.c:559-560`):
 
 ```c
-while (BCM_ALT_CONTROL & 0x80);      /* esperar mientras está ocupado */
-while (!(BCM_ALT_CONTROL & 0x40));   /* esperar a que esté listo */
+while (BCM_ALT_CONTROL & 0x80);      /* wait while busy */
+while (!(BCM_ALT_CONTROL & 0x40));   /* wait until ready */
 ```
 
-Rockbox nunca llega ahí en esta máquina, porque `bcm_init()` solo corre si
-`GPO32` bit 14 dice que el chip está sin alimentar y nosotros fingimos que lo
-está. **El retailOS lo arranca él mismo en todos los arranques**, sin mirar ese
-bit. Los dos bits nuevos se contestan como los dos que ya había: nunca ocupado,
-siempre listo.
+Rockbox never gets there on this machine, because `bcm_init()` only runs if
+`GPO32` bit 14 says the chip is unpowered, and we pretend that it
+is. **The retailOS boots it itself on every boot**, without looking at that
+bit. The two new bits are answered like the two that were already there: never
+busy, always ready.
 
-Y eso destapó dos errores del modelo del Broadcom que Rockbox nunca podía haber
-enseñado:
+And that uncovered two errors in the Broadcom model that Rockbox could never have
+revealed:
 
-- **Los registros de dirección son de 16 bits.** Apple los carga como dos
-  medias palabras, la baja primero (`0x287c28`); Rockbox siempre escribe la
-  palabra entera por `BCM_WR_ADDR32`. Asignar el valor en cada escritura dejaba
-  solo la mitad alta, así que una subida de firmware a `0x000fc000` habría ido
-  a `0x000f0000` sin decir nada.
-- **El puerto de datos es tan ancho como el acceso.** Apple manda los últimos
-  1..255 bytes de un bloque de dos en dos (`0x287ca8`); una escritura de media
-  palabra que guardaba una palabra entera pisaba los dos bytes siguientes.
+- **The address registers are 16-bit.** Apple loads them as two
+  halfwords, low first (`0x287c28`); Rockbox always writes the
+  whole word via `BCM_WR_ADDR32`. Assigning the value on every write left
+  only the high half, so a firmware upload to `0x000fc000` would have gone
+  to `0x000f0000` silently.
+- **The data port is as wide as the access.** Apple sends the last
+  1..255 bytes of a block two at a time (`0x287ca8`); a halfword
+  write that stored a full word clobbered the next two bytes.
 
-### Dónde se queda, con precisión
+### Where it stops, precisely
 
-**La subida del firmware del Broadcom, que va por DMA.**
+**The Broadcom firmware upload, which goes via DMA.**
 
-`0x287be8` parte la transferencia en un grueso y una cola, y le da el grueso a
-`0x286fb4`, que vacía la caché sobre el origen, lo trocea en pedazos de 64 KB,
-llama a `0x1599fc` por cada uno y **espera en un método virtual del `+0x18` del
-objeto driver**. No hay nada modelado que conteste, así que la tarea se bloquea
-para siempre y el planificador se queda en reposo — por eso la máquina parece
-sana y no imprime nada.
+`0x287be8` splits the transfer into a bulk and a tail, and hands the bulk to
+`0x286fb4`, which flushes the cache over the source, chops it into 64 KB
+pieces, calls `0x1599fc` for each one and **waits on a virtual method at
+`+0x18` of the driver object**. Nothing modeled answers, so the task blocks
+forever and the scheduler sits idle — which is why the machine looks
+healthy and prints nothing.
 
-Los registros que toca ya se ven en `-d unimp` como `pp502x.soc-regs`
-`0x6000b000`, `0x6000b020`, `0x6000b040` y `0x6000b060`: **DMA0..DMA3** de
-`pp5020.h`. Así que lo siguiente es el motor de DMA del PP502x, y los argumentos
-de la llamada que se bloquea son conocidos:
+The registers it touches already show up in `-d unimp` as `pp502x.soc-regs`
+`0x6000b000`, `0x6000b020`, `0x6000b040` and `0x6000b060`: **DMA0..DMA3** from
+`pp5020.h`. So the next thing is the PP502x DMA engine, and the arguments
+of the call that blocks are known:
 
 ```
 bcm_load(name = 0x001affe8, data = 0x13ea136c, len = 0x312a0)
-   -> 201 376 bytes a la SRAM del Broadcom, dirección 0
+   -> 201 376 bytes to the Broadcom SRAM, address 0
 ```
 
-**Y hay que saberlo antes de ponerse**: aunque se modele el DMA, la pantalla no
-se encenderá sola. Lo que se sube es el firmware del propio chip —el blob
-`vmcs`, cuyo nombre de fichero está literalmente en la imagen, en `0x2878f4`:
-`"VMCS    BIN"`— y después los dos guests **esperan a que ese firmware
-conteste**:
+**And this has to be known before starting**: even if the DMA is modeled, the
+screen will not turn on by itself. What gets uploaded is the chip's own
+firmware —the `vmcs` blob, whose file name is literally in the image, at
+`0x2878f4`: `"VMCS    BIN"`— and afterwards both guests **wait for that firmware
+to answer**:
 
-| Espera | Apple | Rockbox |
+| Wait | Apple | Rockbox |
 |---|---|---|
-| bit 0 de la palabra `0x10000C00` del chip | `0x287868` | `lcd-video.c:589` |
-| `BCMA_COMMAND` (`0x1f8`) distinto de cero | `0x2878b0` | `lcd-video.c:594` |
+| bit 0 of the chip's `0x10000C00` word | `0x287868` | `lcd-video.c:589` |
+| `BCMA_COMMAND` (`0x1f8`) nonzero | `0x2878b0` | `lcd-video.c:594` |
 
-Esas respuestas las produce código que no estamos ejecutando. O se emula lo
-justo del Broadcom para fingirlas (y entonces hay que averiguar qué protocolo
-de comandos espera el retailOS, que no tiene por qué ser el de Rockbox), o se
-busca la ruta por la que Rockbox se salta el arranque del chip y se mira si el
-retailOS tiene una equivalente.
+Those answers are produced by code we are not running. Either we emulate just
+enough of the Broadcom to fake them (and then we have to figure out which command
+protocol the retailOS expects, which need not be Rockbox's), or we
+look for the path by which Rockbox skips the chip's boot and check whether the
+retailOS has an equivalent.
 
-## El firmware del Broadcom sube, y el chip contesta (2026-08-09)
+## The Broadcom firmware uploads, and the chip answers (2026-08-09)
 
-Hecho lo de arriba: **el retailOS termina toda la puesta en marcha del chip de
-vídeo**. Sube los 201 376 bytes del blob `vmcs` por DMA, arranca el VideoCore,
-recibe las dos respuestas que esperaba, descubre la interfaz del chip y sigue.
-Noventa segundos de ejecución con `-d guest_errors`: **el log sale vacío**. Ni
-un pánico, ni un acceso rechazado, ni un registro sin modelar nuevo. Y el disco
-trabaja de verdad — 460 `READ DMA EXT` de 64 sectores, unos 14 MB leídos, más
-78 escrituras.
+The above is done: **the retailOS completes the entire bring-up of the video
+chip**. It uploads the 201 376 bytes of the `vmcs` blob via DMA, boots the
+VideoCore, receives the two answers it was waiting for, discovers the chip's
+interface and moves on. Ninety seconds of execution with `-d guest_errors`:
+**the log comes out empty**. Not a panic, not a rejected access, not a new
+unmodeled register. And the disk really works — 460 `READ DMA EXT` of 64
+sectors, about 14 MB read, plus 78 writes.
 
-**La pantalla sigue negra.** Capturas a los 10, 20, 40, 60 y 90 s:
-**0 píxeles encendidos en las cinco, 0,00 %**. Eso ya no es un fallo del
-arranque; es que el retailOS no dibuja donde nuestra consola mira, y más abajo
-está el porqué.
+**The screen is still black.** Screenshots at 10, 20, 40, 60 and 90 s:
+**0 pixels lit in all five, 0.00 %**. That is no longer a boot failure; it is
+that the retailOS does not draw where our console looks, and the reason is
+further below.
 
-`navtest.sh` contra `assets/nav-baseline`: **sin regresión**. La barra sigue
-bajando (12 312 y 12 114 px de diferencia por paso de rueda), SELECT sigue
-entrando (31 597 px), y frente a la referencia guardada las capturas difieren
-un par de cientos de píxeles (el reloj de la barra de estado) salvo la última,
-que sale idéntica. *(La cifra exacta del reloj no es un invariante; ver la nota
-al final de la sección "El retailOS dibuja, y se navega".)*
+`navtest.sh` against `assets/nav-baseline`: **no regression**. The bar still
+moves down (12 312 and 12 114 px of difference per wheel step), SELECT still
+enters (31 597 px), and compared with the saved reference the screenshots differ
+by a couple of hundred pixels (the status bar clock) except the last one,
+which comes out identical. *(The exact clock figure is not an invariant; see the
+note at the end of the section "The retailOS draws, and can be navigated".)*
 
-### Los cuatro muros de esta sesión
+### The four walls of this session
 
-| # | Muro | Cómo se encontró | Arreglo |
+| # | Wall | How it was found | Fix |
 |---|---|---|---|
-| 1 | la tarea dormía para siempre tras pedir el DMA | ya estaba acotado | `pp502x-dma`, los **dos** bloques |
-| 2 | `Invalid write at addr 0x0, size 1, region 'ipod-video.bcm2722'` | el propio log de QEMU, en cuanto el DMA empezó a mover datos | el puerto del BCM acepta accesos de un byte |
-| 3 | bucles sobre el bit 0 de `0x10000C00` y sobre `BCMA_COMMAND` | 7,9 millones de lecturas de `0x10000c00` en `-d guest_errors` | el chip contesta como si su firmware corriera |
-| 4 | data abort en `0xa0bd0` leyendo `0xEA00007A` | el firmware lo imprime por semihosting, y el PC salió parcheando `memory_region_access_valid` para volcar el estado del guest | publicar la interfaz del VideoCore en vez de un puntero nulo |
+| 1 | the task slept forever after requesting the DMA | already narrowed down | `pp502x-dma`, **both** blocks |
+| 2 | `Invalid write at addr 0x0, size 1, region 'ipod-video.bcm2722'` | QEMU's own log, as soon as the DMA started moving data | the BCM port accepts single-byte accesses |
+| 3 | loops on bit 0 of `0x10000C00` and on `BCMA_COMMAND` | 7.9 million reads of `0x10000c00` in `-d guest_errors` | the chip answers as if its firmware were running |
+| 4 | data abort at `0xa0bd0` reading `0xEA00007A` | the firmware prints it via semihosting, and the PC came out by patching `memory_region_access_valid` to dump the guest state | publish the VideoCore interface instead of a null pointer |
 
-#### 1. El motor de DMA, y que son dos bloques
+#### 1. The DMA engine, and that there are two blocks
 
-El aviso que traíamos —"los registros que toca ya se ven en `-d unimp` como
-`0x6000b000/20/40/60`"— **era una pista falsa**. Esos son del bloque que
-documenta `pp5020.h`, y aparecían solo porque una rutina de apagado del arranque
-barre *todos* los canales de *los dos* bloques limpiando el bit 31.
+The warning we carried —"the registers it touches already show up in `-d unimp`
+as `0x6000b000/20/40/60`"— **was a red herring**. Those belong to the block that
+`pp5020.h` documents, and they appeared only because a shutdown routine during
+boot sweeps *all* channels of *both* blocks clearing bit 31.
 
-La subida del Broadcom va por un **segundo bloque de DMA que `pp5020.h` no
-menciona**: maestro en `0x60008000`, canales en `0x60009000`. `grep -rn
-"60008000\|60009000" assets/rockbox/` da cero resultados; lo documenta
-únicamente el firmware de Apple, que carga esa base en `0x1da198` y le cuelga
-dos canales.
+The Broadcom upload goes through a **second DMA block that `pp5020.h` does not
+mention**: master at `0x60008000`, channels at `0x60009000`. `grep -rn
+"60008000\|60009000" assets/rockbox/` gives zero results; it is documented
+only by Apple's firmware, which loads that base at `0x1da198` and hangs
+two channels off it.
 
-Los dos bloques son idénticos registro a registro. El mapa completo, con la
-procedencia de cada bit, está en
+The two blocks are identical register for register. The complete map, with the
+provenance of each bit, is in
 [07-pp502x-hardware.md](07-pp502x-hardware.md).
 
-**Los números de interrupción no son una conjetura, y esto importa** porque sin
-la línea correcta el modelo mueve los datos y la tarea se queda dormida igual.
-`0x1d98d0` registra los dos manejadores:
+**The interrupt numbers are not a guess, and this matters** because without
+the correct line the model moves the data and the task stays asleep anyway.
+`0x1d98d0` registers both handlers:
 
 ```
-mov r1, #27 ; r2 = 0x2680c4 (b 0x1d9c40, manejador del bloque B) ; registrar
-mov r1, #28 ; r2 = 0x2680c0 (b 0x1d9be0, manejador del bloque A) ; registrar
+mov r1, #27 ; r2 = 0x2680c4 (b 0x1d9c40, block B handler) ; register
+mov r1, #28 ; r2 = 0x2680c0 (b 0x1d9be0, block A handler) ; register
 ```
 
-27 y 28 son índices de la tabla de interrupciones **del propio firmware**, no
-líneas de hardware. La tabla se construye en `0x1fcaa0`, entrada *n* en
-`objeto+0x208+4n`:
+27 and 28 are indices into **the firmware's own** interrupt table, not
+hardware lines. The table is built at `0x1fcaa0`, entry *n* at
+`object+0x208+4n`:
 
 ```
-0x1fcc38   entrada 26 = -1 (no existe), entrada 27 = 26
-0x1fcc44   entrada 28 = 27
+0x1fcc38   entry 26 = -1 (does not exist), entry 27 = 26
+0x1fcc44   entry 28 = 27
 ```
 
-O sea **bloque B → IRQ 26** y **bloque A → IRQ 27**. Que el índice 27 caiga
-exactamente sobre el `DMA_IRQ = 26` que documenta Rockbox para el bloque que sí
-conoce es la comprobación que hace fiable al par. Y la máquina en marcha está de
-acuerdo: `CPU_INT_EN_STAT` (`0x60004020`) lee `0xcc002017`, con las líneas 26 y
-27 habilitadas y la 28 no.
+That is, **block B → IRQ 26** and **block A → IRQ 27**. That index 27 lands
+exactly on the `DMA_IRQ = 26` that Rockbox documents for the block it does
+know is the check that makes the pair reliable. And the running machine
+agrees: `CPU_INT_EN_STAT` (`0x60004020`) reads `0xcc002017`, with lines 26 and
+27 enabled and 28 not.
 
-Una cosa **inferida** y hay que decirlo: que la dirección del periférico sea un
-puerto y no un rango, o sea que solo `RAM_ADDR` avance. No lo dice ninguna
-fuente; es la única lectura compatible con los dos usos reales, el FIFO del I²S
-de Rockbox y el puerto de datos del Broadcom de Apple.
+One thing is **inferred** and it has to be said: that the peripheral address is a
+port and not a range, i.e. that only `RAM_ADDR` advances. No source says so;
+it is the only reading compatible with the two real uses, Rockbox's I²S FIFO
+and Apple's Broadcom data port.
 
-Y una que **no** se modela: las líneas de petición del periférico. Un canal con
-`WAIT_REQ` puesto está esperando a que un periférico pida datos, y aquí no hay
-ninguno que pida, así que se deja quieto. Eso es justo lo que mantiene la ruta
-de audio de Rockbox comportándose igual que cuando estos registros eran un
+And one that is **not** modeled: the peripheral request lines. A channel with
+`WAIT_REQ` set is waiting for a peripheral to request data, and there is
+none here to request it, so it is left idle. That is exactly what keeps
+Rockbox's audio path behaving the same as when these registers were a
 `create_unimplemented_device`.
 
-#### 2. El puerto del Broadcom acepta bytes sueltos
+#### 2. The Broadcom port accepts single bytes
 
-En cuanto el DMA empezó a mover datos, las cuatro transferencias fallaron en el
-primer acceso. El descriptor que el retailOS programa para la subida deja el
-campo de ancho de acceso a cero, y `pp5020.h:699` deletrea el cero como 8 bits.
-Se comprobó leyendo el registro en marcha: `0x6000901c = 0x02000000`, campo
-30:28 vacío.
+As soon as the DMA started moving data, all four transfers failed on the
+first access. The descriptor the retailOS programs for the upload leaves the
+access-width field at zero, and `pp5020.h:699` spells zero as 8 bits.
+This was checked by reading the register at runtime: `0x6000901c = 0x02000000`,
+field 30:28 empty.
 
-Así que el retailOS sube su firmware de vídeo **byte a byte**. El modelo del
-BCM tenía `valid.min_access_size = 2` y los rechazaba. Ahora acepta 1, 2 y 4, y
-guarda exactamente lo que le dan: el contenido que acaba en la SRAM del chip es
-el mismo se escriba como se escriba, porque el puerto avanza su puntero por el
-tamaño del acceso.
+So the retailOS uploads its video firmware **byte by byte**. The BCM model
+had `valid.min_access_size = 2` and rejected them. It now accepts 1, 2 and 4, and
+stores exactly what it is given: the content that ends up in the chip's SRAM is
+the same however it is written, because the port advances its pointer by the
+access size.
 
-#### 3. Las respuestas del chip, y de dónde sale cada una
+#### 3. The chip's answers, and where each one comes from
 
-Ninguna es un número puesto para que pase la comprobación. Las tres están
-fijadas por el código que las interroga:
+None of them is a number planted to pass the check. All three are
+pinned down by the code that queries them:
 
-| Respuesta | Qué la fija |
+| Answer | What pins it down |
 |---|---|
-| bit 0 de `0x10000C00` = 1 | los dos drivers prueban **ese bit y ninguno más** (`tst r0,#1` sobre un `ldrh` en `0x287880`, `& 1` en `lcd-video.c:589`) y luego escriben cero encima y no lo vuelven a leer. El resto de la palabra es libre |
-| `BCMA_COMMAND` = **1**, exactamente | tres comprobaciones lo encierran: `bcm_load` gira hasta que sea distinto de cero (`0x2878b4`), su llamante lo trata como entero con signo y falla si es negativo (`0x1affc8`), y la rutina que busca la interfaz hace `cmp r0,#1 / bne <rendirse>` en `0x288080`. No queda ni un grado de libertad |
-| `BCMA_STATUS` = base de la interfaz | `0x288088` la lee, `0x288090` rechaza la nula y `0x28809c` la no alineada |
+| bit 0 of `0x10000C00` = 1 | both drivers test **that bit and no other** (`tst r0,#1` on an `ldrh` at `0x287880`, `& 1` at `lcd-video.c:589`) and then write zero over it and never read it again. The rest of the word is free |
+| `BCMA_COMMAND` = **1**, exactly | three checks box it in: `bcm_load` spins until it is nonzero (`0x2878b4`), its caller treats it as a signed integer and fails if it is negative (`0x1affc8`), and the routine that looks for the interface does `cmp r0,#1 / bne <give up>` at `0x288080`. Not a single degree of freedom remains |
+| `BCMA_STATUS` = interface base | `0x288088` reads it, `0x288090` rejects a null one and `0x28809c` an unaligned one |
 
-El arranque del VideoCore es un **flanco, no un nivel**: escribir el bit 31 lo
-suelta y nada lo para, porque el driver borra el registro entero dos escrituras
-después (`lcd-video.c:591`) mientras el núcleo está demostrablemente en marcha,
-y en `0x28805c` vuelve a mandar la secuencia de bootstrap por el puerto
-esperando encontrarlo corriendo todavía. Esa segunda pasada es la que descarta
-la idea de que el bootstrap resetee el chip.
+The VideoCore boot is an **edge, not a level**: writing bit 31 releases
+it and nothing stops it, because the driver clears the whole register two writes
+later (`lcd-video.c:591`) while the core is demonstrably running,
+and at `0x28805c` it sends the bootstrap sequence over the port again,
+expecting to find it still running. That second pass is what rules out
+the idea that the bootstrap resets the chip.
 
-Qué significan por separado los bits 31 y 30 del `0xC0000000`, y qué selecciona
-la media palabra baja del timbre `0xA5A50002`, siguen **sin determinar**. El
-modelo dispara con el bit 31 y con la magia `0xA5A5` respectivamente, que es lo
-único que los drivers permiten deducir.
+What bits 31 and 30 of `0xC0000000` mean separately, and what the low
+halfword of the doorbell `0xA5A50002` selects, remain **undetermined**. The
+model fires on bit 31 and on the `0xA5A5` magic respectively, which is
+all the drivers allow us to deduce.
 
-Tres cosas más que solo enseña el firmware de Apple:
+Three more things that only Apple's firmware reveals:
 
-- **Un comando cuenta solo si el puerto de escritura apuntaba al buzón.** Una
-  subida de 200 KB pasea su puntero por encima de `0x1F8` sin que eso sea un
-  comando — y en el chip real tampoco podría serlo, porque lo que pasa por
-  encima es la propia imagen del VideoCore mientras el VideoCore está parado.
-- **Las dos palabras de control se escriben como dos medias palabras**, así que
-  el efecto hay que decidirlo sobre la palabra ya montada y no sobre un acceso.
-  Actuar sobre el primero habría visto `0x0000` donde iba `0xC0000000`.
-- **El puerto primario y el alterno son motores separados**, con sus propios
-  punteros. Rockbox solo usa el primario; el retailOS usa los dos a la vez.
+- **A command counts only if the write port pointed at the mailbox.** A
+  200 KB upload walks its pointer over `0x1F8` without that being a
+  command — and on the real chip it could not be one either, because what passes
+  over it is the VideoCore image itself while the VideoCore is stopped.
+- **The two control words are written as two halfwords**, so the
+  effect has to be decided on the assembled word and not on a single access.
+  Acting on the first one would have seen `0x0000` where `0xC0000000` was going.
+- **The primary and alternate ports are separate engines**, with their own
+  pointers. Rockbox only uses the primary; the retailOS uses both at once.
 
-Y un error del modelo que Rockbox nunca podía haber enseñado: al terminar un
-comando se escribía cero en `BCMA_STATUS`, un registro que **ningún guest lee**
-— y precisamente el que el retailOS usa para sacar el puntero de la interfaz.
-Ahora se sobrescribe `BCMA_COMMAND`, que es lo que hace el chip real y lo que
-los dos drivers vigilan (`lcd-video.c:204-206` y `:500-506`). De rebote Rockbox
-deja de repintar por la vía del *timeout* y pasa a su camino normal.
+And a model error that Rockbox could never have revealed: on finishing a
+command, zero was written to `BCMA_STATUS`, a register that **no guest reads**
+— and precisely the one the retailOS uses to get the interface pointer.
+Now `BCMA_COMMAND` is overwritten, which is what the real chip does and what
+both drivers watch (`lcd-video.c:204-206` and `:500-506`). As a side effect,
+Rockbox stops repainting via the *timeout* path and switches to its normal path.
 
-#### 4. El puntero nulo que el retailOS no tolera
+#### 4. The null pointer that the retailOS does not tolerate
 
-Publicar "no hay interfaz" con un puntero nulo parecía lo honesto: es la
-codificación que el propio driver define (`0x288090: cmp r1,#0 ; beq <error>`).
-**No funciona**, y el fallo es instructivo.
+Publishing "there is no interface" with a null pointer seemed the honest thing to do: it is the
+encoding that the driver itself defines (`0x288090: cmp r1,#0 ; beq <error>`).
+**It does not work**, and the failure is instructive.
 
-`0x288058` devuelve error, sí. Pero **su único llamante, `0xcff6c`, no mira el
-valor de retorno**: llama a los cuatro enganches de canal y termina con
-`0xcff8c: b 0x28827c`, que desbloquea un mutex que solo se crea en el camino de
-éxito (`0x2880dc`). Con el puntero nulo ese mutex no existe, `0x28827c` hace
-`ldr r0,[r0]` sobre la dirección 0 —que tras el remap es DRAM, así que ni
-siquiera falla ahí— se lleva `0xEA00007A`, la primera palabra de la propia
-imagen del retailOS, y muere dereferenciándola en `0xa0bd0`.
+`0x288058` does return an error. But **its only caller, `0xcff6c`, does not look at the
+return value**: it calls the four channel hooks and ends with
+`0xcff8c: b 0x28827c`, which unlocks a mutex that is only created on the
+success path (`0x2880dc`). With the null pointer that mutex does not exist, `0x28827c` does
+`ldr r0,[r0]` on address 0 —which after the remap is DRAM, so it does not
+even fail there— picks up `0xEA00007A`, the first word of the retailOS
+image itself, and dies dereferencing it at `0xa0bd0`.
 
-Lo que se publica ahora es la estructura entera **con todos los bytes a cero**,
-que el driver lee como "la interfaz está y no tiene canales": `0x2871d8` carga
-el offset de un canal y `0x2871e0` se lo salta si vale cero. Es la ortografía
-del propio driver para un canal ausente, y es lo honesto porque no ejecutamos el
-VideoCore y detrás de un canal no habría nadie.
+What is published now is the whole structure **with every byte set to zero**,
+which the driver reads as "the interface is there and has no channels": `0x2871d8` loads
+a channel's offset and `0x2871e0` skips it if it is zero. That is the driver's own
+spelling for an absent channel, and it is the honest thing because we do not run the
+VideoCore and there would be nobody behind a channel.
 
-**Marcado como SUPUESTO en el código**: dónde se pone esa estructura
-(`0x00180000` de la memoria del chip). La dirección real la elige el firmware
-`vmcs`, que no corremos; nada depende del número, solo de que esté dentro de la
-memoria del chip, alineada a 4, y lejos tanto de la imagen que se sube (0 a
-`0x312a0`) como del framebuffer de Rockbox (`0xE0000`).
+**Marked as ASSUMED in the code**: where that structure is placed
+(`0x00180000` of the chip memory). The real address is chosen by the `vmcs`
+firmware, which we do not run; nothing depends on the number, only on it being inside the
+chip memory, 4-aligned, and far from both the uploaded image (0 to
+`0x312a0`) and Rockbox's framebuffer (`0xE0000`).
 
-### Cómo se localizó el muro 4, que es método reutilizable
+### How wall 4 was located, which is a reusable method
 
-El semihosting dio los registros del abort pero no el PC. El truco: **parchear
-temporalmente `memory_region_access_valid()` en `system/memory.c`** para que,
-además del "Invalid read at addr", llame a `cpu_dump_state(current_cpu, stderr, 0)`.
-Sale el estado completo del guest en el instante del acceso rechazado:
+Semihosting gave the abort registers but not the PC. The trick: **temporarily
+patch `memory_region_access_valid()` in `system/memory.c`** so that,
+in addition to the "Invalid read at addr", it calls `cpu_dump_state(current_cpu, stderr, 0)`.
+That prints the complete guest state at the instant of the rejected access:
 
 ```
 R00=ea00007a R13=108c6f24 R14=002893f0 R15=000a0bd0
 ```
 
-`R15` es el PC del fallo y `R14` la dirección de retorno, que da el llamante de
-un tirón. Comprobación cruzada gratis: el manejador de abort del firmware
-imprimía `R14 : 000A0BD8`, que es exactamente `PC + 8` — el `R14_abt` del ARM.
-El parche está revertido; se reaplica en diez segundos cuando haga falta.
+`R15` is the PC of the fault and `R14` the return address, which gives the caller
+in one go. Free cross-check: the firmware's abort handler
+printed `R14 : 000A0BD8`, which is exactly `PC + 8` — the ARM's `R14_abt`.
+The patch is reverted; it can be reapplied in ten seconds when needed.
 
-### Dónde se queda ahora, con precisión
+### Where it stops now, precisely
 
-El retailOS está **vivo y trabajando**: estado del BCM en `0x108cbec8` = 3
-("hilos del VideoCore en marcha"), el mutex de la interfaz creado en
-`[0x10831978]`, la base publicada en `[0x10831980] = 0x00180000`, y la tabla de
-offsets de canal espejada en `0x108d3bd4` con los ocho a cero, que es lo que le
-dimos.
+The retailOS is **alive and working**: BCM state at `0x108cbec8` = 3
+("VideoCore threads running"), the interface mutex created at
+`[0x10831978]`, the published base at `[0x10831980] = 0x00180000`, and the
+channel offset table mirrored at `0x108d3bd4` with all eight at zero, which is what we
+gave it.
 
-**El siguiente muro es la interfaz de host del VideoCore, y es de otra clase.**
-No es un bit que falte: es que en este aparato **la UI la pinta el chip de
-vídeo**, no el PP502x. Las pruebas, todas negativas y todas verificadas:
+**The next wall is the VideoCore host interface, and it is of a different kind.**
+It is not a missing bit: it is that on this device **the UI is painted by the video
+chip**, not by the PP502x. The evidence, all negative and all verified:
 
-- `findlit.py` no encuentra **ni una** instrucción que cargue `0x000E0000`
-  (`BCMA_CMDPARAM`, donde Rockbox escribe los píxeles) en siete megabytes.
-- Tampoco ninguna que cargue `0xFFFF0000` (`BCMCMD_LCD_UPDATE`) desde el driver
-  del BCM. La única escritura a `BCMA_COMMAND` de toda la imagen es la del
-  bootstrap, con valor 0.
-- El controlador LCD propio del PP502x (`0x70003000`) tiene **una sola
-  referencia** en la imagen, en la rutina de apagado de periféricos del arranque
-  (`0x1328`). No hay driver.
+- `findlit.py` does not find **a single** instruction that loads `0x000E0000`
+  (`BCMA_CMDPARAM`, where Rockbox writes the pixels) in seven megabytes.
+- Nor any that loads `0xFFFF0000` (`BCMCMD_LCD_UPDATE`) from the BCM
+  driver. The only write to `BCMA_COMMAND` in the entire image is the
+  bootstrap's, with value 0.
+- The PP502x's own LCD controller (`0x70003000`) has **a single
+  reference** in the image, in the boot's peripheral shutdown routine
+  (`0x1328`). There is no driver.
 
-Lo que hay en su lugar: cuatro canales de anillo sobre la memoria del chip, y el
-VideoCore **tirando** de la memoria del host. `0xf9ca0` (la tarea `VCHR`) atiende
-peticiones y despacha por opcode ASCII: `'H'` (`0xf9ff0`) copia plana
-host→BCM, `'Y'` (`0xfa110`) blit 2D con escalado en coma fija 16.16, `']'`
-(`0xfa1b4`) barrido por líneas. **En los tres casos la dirección de origen en la
-memoria del host viene en el mensaje del VideoCore**, no la elige el PP.
+What there is instead: four ring channels over the chip memory, and the
+VideoCore **pulling** from host memory. `0xf9ca0` (the `VCHR` task) serves
+requests and dispatches by ASCII opcode: `'H'` (`0xf9ff0`) flat
+host→BCM copy, `'Y'` (`0xfa110`) 2D blit with 16.16 fixed-point scaling, `']'`
+(`0xfa1b4`) line-by-line scan. **In all three cases the source address in
+host memory comes in the VideoCore's message**, the PP does not choose it.
 
-Así que para ver píxeles habría que montar un "VideoCore falso" que hable el
-protocolo de anillo *y* pida los datos. Lo primero es derivable del consumidor;
-lo segundo exige saber qué direcciones pedir.
+So to see pixels one would have to build a "fake VideoCore" that speaks the
+ring protocol *and* requests the data. The first part can be derived from the consumer;
+the second requires knowing which addresses to request.
 
-### La pista más acotada que dejamos
+### The most narrowed-down lead we leave
 
-El análisis anterior daba por no localizado el escritor de `[0x1083198C]`, el
-callback que traduce índice de línea a dirección del host. **Está localizado.**
-`findlit.py` sobre `1083198c` da exactamente una instrucción, `0x1c29c4`, y es
-un inicializador estático de C++ con el guardián `tst r0,#1` del ABI de ARM:
-
-```
-1c299c: ldr r0,[0x108315c8] ; ldr r0,[r0,#4] ; tst r0,#1 ; bne fin   <- guardián
-1c29c0: ldr r0, =0x001c2a04     ; el callback
-1c29c4: ldr r1, =0x1083198c     ; la ranura
-1c29cc: str r0, [r1]            ; *** aquí se registra ***
-```
-
-y el callback `0x1c2a04` no es un cálculo, es **una búsqueda en una tabla de
-direcciones por línea** que cuelga de `[0x108315c8 + 8]`:
+The previous analysis considered the writer of `[0x1083198C]`, the
+callback that translates a line index to a host address, not located. **It is located.**
+`findlit.py` on `1083198c` gives exactly one instruction, `0x1c29c4`, and it is
+a C++ static initializer with the ARM ABI's `tst r0,#1` guard:
 
 ```
-1c2a10: ldr r4,[r0,#8]      ; el contenedor; si es nulo devuelve 0
-1c2a28: bl 0x29e034         ; iterador: primera entrada
-1c2a3c: bl 0x29e034         ; ultima entrada
-1c2a54: bl 0x29e034         ; entrada de la linea pedida, luego se acota
-1c2a80: ldr r0,[r0]         ; *** la direccion del host de esa linea ***
+1c299c: ldr r0,[0x108315c8] ; ldr r0,[r0,#4] ; tst r0,#1 ; bne fin   <- guard
+1c29c0: ldr r0, =0x001c2a04     ; the callback
+1c29c4: ldr r1, =0x1083198c     ; the slot
+1c29cc: str r0, [r1]            ; *** this is where it is registered ***
 ```
 
-Quien rellena `[0x108315c8 + 8]` es `0x1c2a90`, y solo lo llaman dos sitios,
-`0x1c7c30` y `0x1c7cd4`, los dos dentro de la misma rutina — y esa rutina manda
-comandos ASCII cuyas cadenas están doce bytes más abajo: `"transitions"`,
-`"push"`, `"alphawipe"`. Es decir, **el callback de líneas es solo para las
-transiciones de pantalla**, y se registra justo antes y se borra (`mov r1,#0 ; b
-0x1c2a90`) justo después.
+and the callback `0x1c2a04` is not a computation, it is **a lookup in a table of
+per-line addresses** hanging off `[0x108315c8 + 8]`:
 
-Con eso, el siguiente paso queda acotado a una pregunta concreta y contestable:
-**poner un punto de ruptura en `0x1c7c30` con el gdbstub y leer el contenedor
-que pasa en `r8`** da, de una sola vez, dónde vive el framebuffer de la UI en la
-DRAM del host y con qué paso de línea. Con eso ya se puede decidir si merece la
-pena montar el anillo o si basta con apuntar la consola de QEMU a esa memoria.
-Lo que no se sabrá por ahí es el formato de los mensajes `'H'`/`'Y'`, que hay que
-sacar de la tabla de saltos de `0xf9e2c` (30 entradas, cinco identificadas).
+```
+1c2a10: ldr r4,[r0,#8]      ; the container; if null returns 0
+1c2a28: bl 0x29e034         ; iterator: first entry
+1c2a3c: bl 0x29e034         ; last entry
+1c2a54: bl 0x29e034         ; entry for the requested line, then clamped
+1c2a80: ldr r0,[r0]         ; *** the host address of that line ***
+```
 
-**Advertencia sobre ese punto de ruptura**: hoy no se alcanza. `0x1c299c` es un
-inicializador estático perezoso y `[0x1083198C]` sigue valiendo cero en marcha,
-igual que `[0x108315c8]`. La rutina de transición solo corre cuando hay pantalla,
-y no la hay. O sea que primero hace falta que arranque la UI, y para eso hace
-falta el canal.
+What fills `[0x108315c8 + 8]` is `0x1c2a90`, and it is only called from two places,
+`0x1c7c30` and `0x1c7cd4`, both inside the same routine — and that routine sends
+ASCII commands whose strings are twelve bytes further down: `"transitions"`,
+`"push"`, `"alphawipe"`. That is, **the line callback is only for
+screen transitions**, and it is registered just before and cleared (`mov r1,#0 ; b
+0x1c2a90`) just after.
 
-### Dos cosas que se vieron volcando la DRAM, y que cambian el panorama
+With that, the next step is narrowed down to a concrete, answerable question:
+**setting a breakpoint at `0x1c7c30` with the gdbstub and reading the container
+it passes in `r8`** gives, in one go, where the UI framebuffer lives in the
+host DRAM and with what line stride. With that one can decide whether it is worth
+building the ring or whether it is enough to point the QEMU console at that memory.
+What will not be learned that way is the format of the `'H'`/`'Y'` messages, which has to be
+extracted from the jump table at `0xf9e2c` (30 entries, five identified).
 
-Con `pmemsave 0x10000000 0x4000000` a los 55 s y buscando cadenas:
+**Warning about that breakpoint**: today it is not reached. `0x1c299c` is a
+lazy static initializer and `[0x1083198C]` is still zero at runtime,
+just like `[0x108315c8]`. The transition routine only runs when there is a screen,
+and there is none. So first the UI needs to start, and for that
+the channel is needed.
 
-**Las cuatro tareas del VideoCore existen y corren.** `VCIH`, `VCFS`, `VCHR` y
-`VCPD` aparecen no solo como literales de la imagen sino **copiados al montón**
-(`0x13e5d9cc`, `0x13e5ef2c`, `0x13e5fd78`, `0x13e60e58`…), que es donde el
-planificador guarda el nombre de cada tarea. El retailOS llegó hasta el final de
+### Two things seen by dumping the DRAM, which change the picture
+
+With `pmemsave 0x10000000 0x4000000` at 55 s and searching for strings:
+
+**The four VideoCore tasks exist and run.** `VCIH`, `VCFS`, `VCHR` and
+`VCPD` appear not only as literals of the image but also **copied to the heap**
+(`0x13e5d9cc`, `0x13e5ef2c`, `0x13e5fd78`, `0x13e60e58`…), which is where the
+scheduler stores the name of each task. The retailOS made it to the end of
 `0x2892d4`.
 
-**Y la que no corrió es la de la pantalla.** `display_control` y `transitions`
-aparecen **solo en direcciones de la imagen** (`0x10163c40`, `0x101c7cd8`); no
-hay ni una copia formateada en el montón. Es decir, `0x164e9c` nunca llegó a
-componer su `display_control %d model=%d power=%d`. Sin canal no hay a quién
-mandárselo, y sin eso la UI no arranca. Es prueba indirecta —un buffer de pila
-pudo haberse pisado— pero apunta en la misma dirección que todo lo demás.
+**And the one that did not run is the display one.** `display_control` and `transitions`
+appear **only at image addresses** (`0x10163c40`, `0x101c7cd8`); there is
+not a single formatted copy on the heap. That is, `0x164e9c` never got to
+compose its `display_control %d model=%d power=%d`. Without a channel there is nobody
+to send it to, and without that the UI does not start. It is indirect evidence —a stack
+buffer could have been overwritten— but it points in the same direction as everything else.
 
-**El `vmcs.bin` que subimos es el de verdad.** Esto no se sabía. El buffer que
-el DMA lee (`0x13ea136c`, `0x312a0` bytes) contiene, en su offset `0xbfe8`, la
-tabla de símbolos del firmware del VideoCore:
+**The `vmcs.bin` we upload is the real one.** This was not known. The buffer that
+the DMA reads (`0x13ea136c`, `0x312a0` bytes) contains, at its offset `0xbfe8`, the
+symbol table of the VideoCore firmware:
 
 ```
 tasks, version, commands, power_down, set_vll_dir, led_control, disk_notify,
@@ -848,121 +848,121 @@ motor_control, camera_control, display_control, end_application,
 power_management, load_application, vmcs_display_clear, vmcs_display_enable
 ```
 
-más plantillas de **respuesta** —`value=%d`, `drive=%i inuse=%i`,
-`error=%d error_msg="bad argument"`— que solo tienen sentido en el lado del
-chip. Y viene de `assets/ipod-video-disk.img`, offset de fichero `0xb27508`, que
-es la partición de firmware; el mismo contenido está en
-`assets/ipod-video-fw.bin` en el mismo offset. **No** está en `osos_full.bin`.
+plus **response** templates —`value=%d`, `drive=%i inuse=%i`,
+`error=%d error_msg="bad argument"`— that only make sense on the
+chip side. And it comes from `assets/ipod-video-disk.img`, file offset `0xb27508`, which
+is the firmware partition; the same content is in
+`assets/ipod-video-fw.bin` at the same offset. It is **not** in `osos_full.bin`.
 
-O sea: la máquina emulada ya tiene el firmware real del VideoCore, lo lee del
-disco, lo sube entero y correcto a la SRAM del chip modelado. Lo único que no
-hace es ejecutarlo. Eso convierte "emular el VideoCore" de idea abstracta en una
-opción con material: el binario está ahí, con símbolos, y el vocabulario de
-comandos que el host le manda está a la vista.
+In other words: the emulated machine already has the real VideoCore firmware, reads it from
+disk, and uploads it whole and correct to the modeled chip's SRAM. The only thing it does not
+do is execute it. That turns "emulating the VideoCore" from an abstract idea into an
+option with material: the binary is there, with symbols, and the vocabulary of
+commands the host sends it is in plain sight.
 
-## El retailOS dibuja, y se navega (2026-08-09)
+## The retailOS draws, and can be navigated (2026-08-09)
 
-**La interfaz de Apple está en pantalla y responde a la rueda.** Sin ejecutar
-una sola instrucción de VideoCore: lo que se ha modelado es su *protocolo*.
+**Apple's interface is on screen and responds to the wheel.** Without executing
+a single VideoCore instruction: what has been modeled is its *protocol*.
 
-| Fotograma | Qué se ve |
+| Frame | What is seen |
 |---|---|
-| 10 s en adelante | la pantalla de idioma del primer arranque: `Language`, `English`, `日本語`, `Čeština`, `Dansk`, `Deutsch`, `Español`, `Français`, `Ελληνικά`, `Italiano` |
-| SELECT | el **menú principal del iPod** en el idioma elegido: Music / Photos / Videos / Extras / Settings / Shuffle Songs |
-| rueda | la barra azul baja de *Music* a *Videos*, 15 360 px de diferencia |
-| SELECT | entra en *Videos*: Video Playlists / Movies / Music Videos / Video Podcasts / Video Settings, 18 731 px |
-| MENU | vuelve al menú principal con *Videos* aún seleccionado, otros 18 731 px |
+| 10 s onward | the first-boot language screen: `Language`, `English`, `日本語`, `Čeština`, `Dansk`, `Deutsch`, `Español`, `Français`, `Ελληνικά`, `Italiano` |
+| SELECT | the **iPod main menu** in the chosen language: Music / Photos / Videos / Extras / Settings / Shuffle Songs |
+| wheel | the blue bar moves down from *Music* to *Videos*, 15 360 px of difference |
+| SELECT | enters *Videos*: Video Playlists / Movies / Music Videos / Video Podcasts / Video Settings, 18 731 px |
+| MENU | goes back to the main menu with *Videos* still selected, another 18 731 px |
 
-Capturas en `assets/apple/`, reproducibles con
-`tools/ipod_video/appletest.sh`. Las seis del arranque (10, 20, 40, 60, 90 y
-120 s) dan **75 267 de 76 800 píxeles encendidos, el 98,00 %, y 307 colores**,
-idénticas entre sí — la pantalla se pinta y se queda.
+Screenshots in `assets/apple/`, reproducible with
+`tools/ipod_video/appletest.sh`. The six from boot (10, 20, 40, 60, 90 and
+120 s) give **75 267 of 76 800 pixels lit, 98.00 %, and 307 colors**,
+identical to each other — the screen gets painted and stays.
 
-`navtest.sh` contra `assets/nav-baseline`: **sin regresión**. Seis fotogramas
-difieren un par de cientos de píxeles (el reloj de la barra de estado) y el
-séptimo **0**, byte a byte idéntico.
+`navtest.sh` against `assets/nav-baseline`: **no regression**. Six frames
+differ by a couple of hundred pixels (the status bar clock) and the
+seventh by **0**, byte-for-byte identical.
 
-> **Corregido el 2026-08-09, ejecutándolo.** Aquí ponía que el séptimo
-> fotograma difiere 1 590 px "por los contadores de la pantalla de grabación".
-> Medido hoy: el séptimo es *Now Playing*, no lleva reloj, y sale **byte a
-> byte idéntico** a la línea base. El propio mensaje del commit `5b5af8966` ya
-> decía "0 in the seventh".
+> **Corrected on 2026-08-09, by running it.** This used to say that the seventh
+> frame differs by 1 590 px "because of the recording screen counters".
+> Measured today: the seventh is *Now Playing*, has no clock, and comes out **byte-for-byte
+> identical** to the baseline. The very message of commit `5b5af8966` already
+> said "0 in the seventh".
 >
-> Y sobre los otros seis: **la cifra exacta no es un invariante**. En este
-> documento aparece como 120 y como 225–227, en el commit `5b5af8966` como 201,
-> y una ejecución del 2026-08-09 dio 266. Todas son el reloj, y cambian con los
-> dígitos que cambien entre una captura y otra. Lo estable —y lo único que hay
-> que comprobar— es **la forma**: seis fotogramas con un par de cientos de
-> píxeles de diferencia y el séptimo a cero.
+> And about the other six: **the exact figure is not an invariant**. In this
+> document it appears as 120 and as 225–227, in commit `5b5af8966` as 201,
+> and a run on 2026-08-09 gave 266. All of them are the clock, and they change with the
+> digits that change between one screenshot and the next. What is stable —and the only thing that
+> needs checking— is **the shape**: six frames with a couple of hundred
+> pixels of difference and the seventh at zero.
 
-### El hallazgo que da la vuelta al diagnóstico anterior
+### The finding that overturns the previous diagnosis
 
-La sesión anterior concluyó que la UI la pinta el VideoCore *tirando* de la
-memoria del host, y que por eso hacía falta un VideoCore falso que además
-supiera qué direcciones pedir. **La primera mitad es cierta y la segunda no.**
+The previous session concluded that the UI is painted by the VideoCore *pulling* from
+host memory, and that therefore a fake VideoCore was needed that would also
+know which addresses to request. **The first half is true and the second is not.**
 
-Esa ruta —los opcodes `'H'`, `'Y'`, `']'` de la tarea VCHR, y el callback de
-líneas de `[0x1083198C]`— existe, pero es la del **pase de diapositivas y las
-transiciones**: `[0x1083198C]` solo lo rellena `0x1c2a90`, y a `0x1c2a90` solo
-lo llaman `0x1c7c30` y `0x1c7cd4`, los dos dentro de la rutina de transiciones.
+That path —the `'H'`, `'Y'`, `']'` opcodes of the VCHR task, and the line
+callback of `[0x1083198C]`— exists, but it is the one for the **slideshow and
+transitions**: `[0x1083198C]` is only filled by `0x1c2a90`, and `0x1c2a90` is only
+called by `0x1c7c30` and `0x1c7cd4`, both inside the transitions routine.
 
-La UI normal va por el camino contrario, y **es el host quien empuja**:
+The normal UI goes the opposite way, and **it is the host that pushes**:
 
-1. `0x1649ac` pide al VideoCore que le cree **dos** superficies (doble búfer en
-   el chip, un solo búfer de píxeles en el host).
-2. Cada una es un mensaje de **opcode 8** por el canal de tipo 2 que lleva
-   formato, ancho, alto y paso, y una dirección de chip a cero, que en este
-   protocolo significa *"elígela tú"* (`0x286d50` guarda la que devuelve la
-   respuesta solo si el llamante puso cero).
-3. Como el VideoCore somos nosotros, **la dirección la elegimos nosotros**.
-4. `0x164524` sube la superficie entera por el **puerto alterno** y `0x165024`
-   sube después solo la banda sucia.
-5. **Opcode 3** presenta: asa en `+12`, ancho en `+24` y alto en `+26`.
+1. `0x1649ac` asks the VideoCore to create **two** surfaces for it (double buffering on
+   the chip, a single pixel buffer on the host).
+2. Each one is an **opcode 8** message over the type 2 channel carrying
+   format, width, height and stride, and a chip address of zero, which in this
+   protocol means *"you choose it"* (`0x286d50` stores the one returned in the
+   response only if the caller passed zero).
+3. Since we are the VideoCore, **we choose the address**.
+4. `0x164524` uploads the whole surface through the **alternate port** and `0x165024`
+   then uploads only the dirty band.
+5. **Opcode 3** presents: handle at `+12`, width at `+24` and height at `+26`.
 
-Es decir: no hay que adivinar dónde está el framebuffer de Apple ni pedir nada.
-En cuanto contestamos al opcode 8, el retailOS mete su interfaz dentro de la
-memoria del chip modelado, y la consola de QEMU no tiene más que apuntar ahí.
+That is: there is no need to guess where Apple's framebuffer is, or to request anything.
+As soon as we answer opcode 8, the retailOS puts its interface inside the
+modeled chip's memory, and the QEMU console only has to point there.
 
-Confirmación independiente, y muy útil para futuras sesiones: el retailOS ya
-componía su UI entera en la DRAM del host **antes** de todo esto. El descriptor
-estático de `0x10883634` la sitúa en `0x10885db0`, 320×240, RGB565, paso 640, y
-un volcado de esa memoria a los 75 s ya enseñaba la pantalla de idioma
-completa. Lo que faltaba no era el dibujo: era la entrega.
+Independent confirmation, and very useful for future sessions: the retailOS was already
+composing its entire UI in host DRAM **before** all of this. The
+static descriptor at `0x10883634` places it at `0x10885db0`, 320×240, RGB565, stride 640, and
+a dump of that memory at 75 s already showed the complete language screen.
+What was missing was not the drawing: it was the delivery.
 
-### Los cuatro muros de esta sesión
+### The four walls of this session
 
-| # | Muro | Cómo se encontró | Arreglo |
+| # | Wall | How it was found | Fix |
 |---|---|---|---|
-| 1 | los ocho offsets de canal a cero, o sea "no hay canales" | ya estaba acotado | publicar canales de verdad, tipos 1 y 2 |
-| 2 | sin canal, cada orden ASCII se descarta **sin formatear** | `0xe9380` devuelve −1 antes del `vsnprintf` de `0xe9394` | lo anterior |
-| 3 | ninguna interrupción despierta al despachador del VideoCore | `[0x1081eca8]` vale cero toda la ejecución y ninguna instrucción lo escribe | **no hace falta**: ver abajo |
-| 4 | la rueda no movía nada, con Rockbox funcionando en la misma máquina | el despachador de interrupciones de Apple, `0x277128` | conducir `HI_IRQ`, la línea 30 del banco bajo |
+| 1 | the eight channel offsets at zero, i.e. "there are no channels" | it was already narrowed down | publish real channels, types 1 and 2 |
+| 2 | with no channel, each ASCII command is discarded **unformatted** | `0xe9380` returns −1 before the `vsnprintf` at `0xe9394` | the above |
+| 3 | no interrupt wakes the VideoCore dispatcher | `[0x1081eca8]` is zero for the whole run and no instruction writes it | **not needed**: see below |
+| 4 | the wheel did not move anything, with Rockbox working on the same machine | Apple's interrupt dispatcher, `0x277128` | drive `HI_IRQ`, line 30 of the low bank |
 
-#### 1 y 2. Los canales
+#### 1 and 2. The channels
 
-El protocolo entero —cabecera de dieciséis bytes con magia `0xF1A55A1F`, dos
-anillos por canal, cuatro punteros cada uno en su propia línea de dieciséis
-bytes, y el timbre que es la media palabra `0x0031` a `BCM_CONTROL`— está
-documentado campo a campo, con la instrucción que fija cada uno, en
-[07-pp502x-hardware.md](07-pp502x-hardware.md). El modelo está en
+The whole protocol —sixteen-byte header with magic `0xF1A55A1F`, two
+rings per channel, four pointers each on its own sixteen-byte
+line, and the doorbell, which is the halfword `0x0031` to `BCM_CONTROL`— is
+documented field by field, with the instruction that sets each one, in
+[07-pp502x-hardware.md](07-pp502x-hardware.md). The model is in
 `hw/arm/ipod_video/ipod_video_vc.c`.
 
-Lo que se publica son dos canales: **tipo 1** (órdenes de texto) y **tipo 2**
-(RPC binario de gráficos). Los tipos 5, 6 y 7 se dejan **ausentes a propósito**:
-son la dirección en la que el VideoCore habla primero, y eso es justo lo que no
-se puede modelar (muro 3). Dejarlos a cero es la ortografía del propio driver
-para un canal que no existe, y `0xcff6c` no mira ni un valor de retorno.
+What is published is two channels: **type 1** (text commands) and **type 2**
+(binary graphics RPC). Types 5, 6 and 7 are left **absent on purpose**:
+they are the direction in which the VideoCore speaks first, and that is exactly what cannot
+be modeled (wall 3). Leaving them at zero is the driver's own spelling
+for a channel that does not exist, and `0xcff6c` does not look at a single return value.
 
-Las respuestas de texto salen del propio `vmcs.bin`: los veinte nombres de orden
-que registra con `gencmd_register` están en un bloque contiguo del offset
-`0xBE24`, y las plantillas de respuesta en `0xBFF8` (`value=%d`) y `0xC004` en
-adelante (`error=%d error_msg="…"`). Una orden registrada recibe **la cadena
-vacía**, que es lo honesto para un *setter* y lo único que no puede ser un
-número equivocado; cualquier otra recibe la plantilla "no registrada" del propio
-firmware. El único requisito duro es que la carga útil **no** sea de longitud
-cero: `0x2872f0` devuelve éxito solo si volvió al menos un byte.
+The text responses come from `vmcs.bin` itself: the twenty command names
+it registers with `gencmd_register` are in a contiguous block at offset
+`0xBE24`, and the response templates at `0xBFF8` (`value=%d`) and from `0xC004`
+onward (`error=%d error_msg="…"`). A registered command receives **the empty
+string**, which is the honest thing for a *setter* and the only thing that cannot be a
+wrong number; any other receives the firmware's own "not registered"
+template. The only hard requirement is that the payload is **not** of length
+zero: `0x2872f0` returns success only if at least one byte came back.
 
-Las cinco órdenes que manda el arranque, tal como las ve el modelo:
+The five commands that the boot sends, as the model sees them:
 
 ```
 set_vll_dir /Resources/VideoCore/Library
@@ -972,158 +972,158 @@ power_management set_policy manual 27
 pm_set_policy min
 ```
 
-**Corrección a la nota anterior**: la roadmap decía que `0x164e9c` "nunca llegó
-a componer su `display_control`". Era correcto, pero no por lo que se pensaba.
-La llamada sí se hace; lo que pasa es que `0xe9358` comprueba el canal en
-`0xe9374` y aborta en `0xe9380`, **antes** del `vsnprintf` de `0xe9394`, así que
-la cadena formateada nunca llega a existir en el montón. La prueba indirecta del
-volcado de DRAM era buena; la causa que se le atribuyó, no.
+**Correction to the previous note**: the roadmap said that `0x164e9c` "never got
+to compose its `display_control`". That was correct, but not for the reason thought.
+The call is made; what happens is that `0xe9358` checks the channel at
+`0xe9374` and aborts at `0xe9380`, **before** the `vsnprintf` at `0xe9394`, so
+the formatted string never comes to exist on the heap. The indirect evidence from the
+DRAM dump was good; the cause attributed to it was not.
 
-#### 3. La interrupción que no hizo falta
+#### 3. The interrupt that was not needed
 
-El despachador que despertaría a una tarea dormida, `0x288100`, solo corre desde
-la tarea VCIH (`0x1239b8`), que espera un evento en `[0x1081eca8]`. `findlit.py`
-da **una sola** instrucción que carga ese literal y es una lectura; un
-*watchpoint* de escritura durante todo el arranque solo pilla el `memset` del
-*scatter-load*. Sin la línea de interrupción del BCM —que sigue **sin
-identificar**— esa tarea no despierta jamás.
+The dispatcher that would wake a sleeping task, `0x288100`, only runs from
+the VCIH task (`0x1239b8`), which waits for an event at `[0x1081eca8]`. `findlit.py`
+gives **a single** instruction that loads that literal, and it is a read; a
+write *watchpoint* during the entire boot only catches the *scatter-load*
+`memset`. Without the BCM interrupt line —which is still **not
+identified**— that task never wakes up.
 
-Y resulta que para el camino que dibuja **no importa**. Todas las peticiones del
-retailOS son síncronas dentro de una misma tarea: `0x28861c` para mandar y
-`0x2883d4` justo después para leer. Y `0x2883d4` solo se duerme si el anillo
-está vacío — `0x2883f8` vuelve en cuanto tiene lo que pidió, y antes de esperar
-`0x288418` refresca el puntero de escritura desde la memoria del chip. Así que
-**si la respuesta ya está puesta cuando el guest mira, `0x2870dc` no se alcanza
-nunca**. El modelo actúa sobre el propio `str` del puntero de escritura del
-guest, que ocurre antes, así que siempre llega primero.
+And it turns out that for the drawing path **it does not matter**. All the
+retailOS requests are synchronous within a single task: `0x28861c` to send and
+`0x2883d4` right after to read. And `0x2883d4` only sleeps if the ring
+is empty — `0x2883f8` returns as soon as it has what it asked for, and before waiting
+`0x288418` refreshes the write pointer from the chip memory. So
+**if the response is already in place when the guest looks, `0x2870dc` is never
+reached**. The model acts on the guest's own `str` of the write pointer,
+which happens earlier, so it always gets there first.
 
-Eso convierte "hace falta identificar la IRQ del BCM" de bloqueo estructural en
-deuda acotada: solo hace falta para los canales 5 y 6, o sea para el sistema de
-ficheros del VideoCore y para las transiciones.
+That turns "the BCM IRQ needs to be identified" from a structural blocker into
+bounded debt: it is only needed for channels 5 and 6, i.e. for the VideoCore
+file system and for transitions.
 
-#### 4. `HI_IRQ`: el muro que solo podía enseñar Apple
+#### 4. `HI_IRQ`: the wall that only Apple could reveal
 
-Con la pantalla pintada, la rueda no movía nada — y Rockbox se navegaba entero
-en la misma máquina y con el mismo modelo de rueda. La causa no estaba en la
-rueda.
+With the screen painted, the wheel did not move anything — and Rockbox could be navigated fully
+on the same machine and with the same wheel model. The cause was not in the
+wheel.
 
-`pp5020.h` de Rockbox lista `HI_IRQ` como la fuente **30** del banco bajo, entre
-`DMA_IRQ` 26 y `GPIO0_IRQ` 32, y luego **no la lee nunca**: su manejador va
-directo a `CPU_HI_INT_STAT`. Con solo Rockbox delante, dejar esa línea sin
-conducir parece correcto.
+Rockbox's `pp5020.h` lists `HI_IRQ` as source **30** of the low bank, between
+`DMA_IRQ` 26 and `GPIO0_IRQ` 32, and then **never reads it**: its handler goes
+straight to `CPU_HI_INT_STAT`. With only Rockbox in front of you, leaving that line
+undriven looks correct.
 
-El despachador del retailOS, `0x277128`, hace lo contrario: lee las dos palabras
-de estado y se niega a mirar el banco alto si el bajo no trae el bit 30.
+The retailOS dispatcher, `0x277128`, does the opposite: it reads both status
+words and refuses to look at the high bank if the low one does not carry bit 30.
 
 ```
-277134:  ldr r4, [0x60004000]     ; banco bajo
-277138:  ldr r5, [0x60004100]     ; banco alto
-2771a4:  tst r4, #0x40000000      ; hay algo arriba?
-2771a8:  beq  <espuria>
-2771dc:  tst r5, #0x100           ; la linea I2C, o sea el click wheel
-2771e4:  bl 0x281350              ; el manejador del click wheel
+277134:  ldr r4, [0x60004000]     ; low bank
+277138:  ldr r5, [0x60004100]     ; high bank
+2771a4:  tst r4, #0x40000000      ; anything up there?
+2771a8:  beq  <spurious>
+2771dc:  tst r5, #0x100           ; the I2C line, i.e. the click wheel
+2771e4:  bl 0x281350              ; the click wheel handler
 ```
 
-O sea que **cada pulsación se tomaba y la tiraba el propio guest**. El arreglo
-es una línea de lógica en el controlador: el banco alto conduce la línea 30 del
-bajo.
+So **every press was taken and thrown away by the guest itself**. The fix
+is one line of logic in the controller: the high bank drives line 30 of the
+low one.
 
-De rebote quedó verificado que el retailOS usa **el mismo formato de paquete de
-rueda** que Rockbox (`0x281374: cmp ip, #0x8000001a`), lo cual es una
-confirmación independiente de algo que hasta ahora solo decía una fuente. Los
-detalles están en [07-pp502x-hardware.md](07-pp502x-hardware.md).
+As a side effect it was verified that the retailOS uses **the same wheel packet
+format** as Rockbox (`0x281374: cmp ip, #0x8000001a`), which is an
+independent confirmation of something that until now only one source stated. The
+details are in [07-pp502x-hardware.md](07-pp502x-hardware.md).
 
-### Lo que se elige y no se deriva, marcado como tal
+### What is chosen rather than derived, marked as such
 
-- **Dónde vive la interfaz** en la memoria del chip (`0x00180000`), dónde van
-  los bloques de control y los anillos dentro de ella, y **dónde van las
-  superficies** (`0x00200000` en adelante). La dirección real la elegiría el
-  firmware `vmcs`, que no corremos; nada depende del número.
-- **Que toda orden registrada tenga éxito.** No somos el VideoCore y no podemos
-  fallar por sus motivos.
-- **El código de resultado 0** en la cabecera de respuesta, y el cero que
-  devuelven los opcodes 1, 2, 4, 9 y 16 del canal de gráficos. Ninguno de los
-  llamantes ramifica sobre ellos.
-- La memoria del chip pasa de 2 a **4 MB** para que quepan las superficies. El
-  BCM2722 real tiene su propia SDRAM para eso; cuánta, sin determinar.
+- **Where the interface lives** in the chip's memory (`0x00180000`), where the
+  control blocks and rings go within it, and **where the surfaces go**
+  (`0x00200000` onwards). The real address would be chosen by the `vmcs`
+  firmware, which we do not run; nothing depends on the number.
+- **That every registered command succeeds.** We are not the VideoCore and we
+  cannot fail for its reasons.
+- **Result code 0** in the response header, and the zero returned by
+  opcodes 1, 2, 4, 9 and 16 of the graphics channel. None of the
+  callers branch on them.
+- The chip's memory goes from 2 to **4 MB** so the surfaces fit. The
+  real BCM2722 has its own SDRAM for that; how much, undetermined.
 
-### Lo que sigue sin estar
+### What is still missing
 
-- **La línea de interrupción del BCM.** Sin ella no hay canal 5 (sistema de
-  ficheros del VideoCore) ni canal 6 (VCHR), y por tanto no hay transiciones ni
-  pase de diapositivas ni reproducción de vídeo.
-- **Los canales de tipo 7** y dieciocho de los treinta opcodes de VCHR.
-- **El campo `+0x00`** del bloque de control de canal y el `u16 +0x0e` de la
-  cabecera de mensaje: siempre cero, nadie los lee.
-- Qué contesta de verdad el firmware a cada `display_control`. Da igual hoy —
-  `0x164eec` solo mira el retorno— pero es una suposición.
-- Audio, y el COP.
+- **The BCM interrupt line.** Without it there is no channel 5 (VideoCore
+  file system) and no channel 6 (VCHR), and therefore no transitions,
+  no slideshow and no video playback.
+- **Type 7 channels** and eighteen of the thirty VCHR opcodes.
+- **The `+0x00` field** of the channel control block and the `u16 +0x0e` of the
+  message header: always zero, nobody reads them.
+- What the firmware really answers to each `display_control`. It doesn't matter
+  today — `0x164eec` only looks at the return value— but it is an assumption.
+- Audio, and the COP.
 
-## Estrategia (iPod classic 6G)
+## Strategy (iPod classic 6G)
 
-> **Superada, y por un camino que no era éste.** La estrategia de abajo daba el
-> `osos` por inabordable y proponía arrancar Rockbox primero. Lo que pasó fue
-> otra cosa: el 9 de agosto de 2026 **el propio aparato descifró su firmware**
-> con su motor AES por USB (`b71d16f3d`,
-> [10-classic6g-emcore.md](10-classic6g-emcore.md)), así que el retailOS pasó de
-> ser el hito especulativo H7 a ser lo primero que se arrancó — y **Rockbox
-> sobre el S5L8702 nunca llegó a probarse**. El párrafo de abajo se conserva
-> porque su segunda mitad sigue siendo cierta y fue exactamente lo que ocurrió:
-> los drivers de Rockbox fueron la especificación ejecutable contra la que se
-> validó cada periférico.
+> **Superseded, and by a path other than this one.** The strategy below took the
+> `osos` to be out of reach and proposed booting Rockbox first. What happened was
+> something else: on August 9, 2026 **the device itself decrypted its firmware**
+> with its AES engine over USB (`b71d16f3d`,
+> [10-classic6g-emcore.md](10-classic6g-emcore.md)), so the retailOS went from
+> being the speculative milestone H7 to being the first thing that booted — and
+> **Rockbox on the S5L8702 was never tried**. The paragraph below is kept
+> because its second half is still true and was exactly what happened:
+> Rockbox's drivers were the executable specification against which
+> each peripheral was validated.
 
-El `osos` de Apple está cifrado con la clave GID del SoC
-(ver [01-firmware-ipsw.md](01-firmware-ipsw.md)), así que no es un objetivo
-inicial razonable. **El primer objetivo es arrancar Rockbox**, que es open
-source, se compila sin firmar, tiene drivers a nivel de registro para todo el
-S5L8702 y se carga en `0x08000000` — exactamente igual que el `osos`.
+Apple's `osos` is encrypted with the SoC's GID key
+(see [01-firmware-ipsw.md](01-firmware-ipsw.md)), so it is not a reasonable
+initial target. **The first target is booting Rockbox**, which is open
+source, builds unsigned, has register-level drivers for the whole
+S5L8702 and loads at `0x08000000` — exactly like the `osos`.
 
-Ventaja de rebote: los drivers de Rockbox son la especificación ejecutable
-contra la que validar cada periférico que modelemos.
+Side benefit: Rockbox's drivers are the executable specification
+against which to validate each peripheral we model.
 
-> Y hubo una tercera fuente que la estrategia no preveía y que resultó
-> imprescindible: **el desensamblado del propio retailOS**. Los bloques que
-> ninguna fuente externa nombra —el compositor de `0x38900000`, el generador de
-> `0x3C100000`, los registros del motor de trama del LCD— sólo se pudieron
-> modelar leyendo el código de Apple. Rockbox dice cómo es el hardware; Apple
-> dice qué partes de ese hardware hay que hacer funcionar de verdad.
+> And there was a third source the strategy did not foresee and that turned out
+> to be indispensable: **the disassembly of the retailOS itself**. The blocks that
+> no external source names —the compositor at `0x38900000`, the generator at
+> `0x3C100000`, the LCD frame engine registers— could only be
+> modeled by reading Apple's code. Rockbox says what the hardware is like; Apple
+> says which parts of that hardware really have to work.
 
-## Hitos
+## Milestones
 
-> **Estos hitos son los del iPod classic 6G (S5L8702)**, que fue el objetivo
-> original.
+> **These milestones are for the iPod classic 6G (S5L8702)**, which was the
+> original target.
 >
-> **Corregido el 10 de agosto de 2026.** Aquí ponía que «H3 en adelante están
-> parados… porque el firmware del Classic está cifrado y no hay nada real que
-> arrancar». Ya no. **H3, H4 y H5 están hechos, y H7 —el hito marcado como
-> especulativo— también, aunque por otra vía**: no hizo falta modelar el motor
-> AES ni volcar la bootrom, porque descifró el aparato. Lo que sigue sin hacerse
-> es **H2b (arrancar Rockbox en esta máquina, que nunca se intentó)** y **H6
-> (audio)**. Los criterios de éxito de abajo se conservan tal cual se
-> escribieron, con una nota de qué pasó realmente en cada uno.
+> **Corrected on August 10, 2026.** This used to say that "H3 onwards are
+> stalled… because the Classic's firmware is encrypted and there is nothing real
+> to boot". Not anymore. **H3, H4 and H5 are done, and H7 —the milestone marked
+> as speculative— too, albeit by another route**: there was no need to model the
+> AES engine or dump the bootrom, because the device decrypted it. What remains
+> undone is **H2b (booting Rockbox on this machine, which was never attempted)**
+> and **H6 (audio)**. The success criteria below are kept exactly as they were
+> written, with a note on what really happened in each one.
 
-### H0 — Infraestructura ✅
-- [x] Clonar `devos50/qemu-ios`, crear rama `ipod_classic_6g`
-- [x] Compilar el baseline (`arm-softmmu`) en WSL
-- [x] Herramienta de parseo del firmware (`tools/ipod_classic/fwtool.py`)
-- [x] Extraer `osos` / `aupd` del `.ipsw`
-- [x] Mapa de memoria y de IRQs del S5L8702 documentado
+### H0 — Infrastructure ✅
+- [x] Clone `devos50/qemu-ios`, create branch `ipod_classic_6g`
+- [x] Build the baseline (`arm-softmmu`) in WSL
+- [x] Firmware parsing tool (`tools/ipod_classic/fwtool.py`)
+- [x] Extract `osos` / `aupd` from the `.ipsw`
+- [x] S5L8702 memory and IRQ map documented
 
-### H1 — Máquina mínima que ejecuta instrucciones ✅
-- [x] `include/hw/arm/ipod_classic.h` con la tabla de bases del S5L8702
-- [x] `hw/arm/ipod_classic.c`: CPU ARM926EJ-S, SDRAM `0x08000000` (64 MB),
+### H1 — Minimal machine that executes instructions ✅
+- [x] `include/hw/arm/ipod_classic.h` with the S5L8702 base table
+- [x] `hw/arm/ipod_classic.c`: ARM926EJ-S CPU, SDRAM `0x08000000` (64 MB),
       IRAM `0x22000000` (256 KB)
-- [x] Entradas en `hw/arm/meson.build`, `hw/arm/Kconfig` y
+- [x] Entries in `hw/arm/meson.build`, `hw/arm/Kconfig` and
       `configs/devices/arm-softmmu/default.mak` (`CONFIG_IPOD_CLASSIC_6G`)
-- [x] Ruta de arranque tipo `-kernel`: cargar un binario en `0x08000000` y
-      poner ahí el PC (saltarse la bootrom, que no tenemos)
-- [x] Los 32 periféricos aún no modelados registrados como
-      `create_unimplemented_device()`, para que `-d unimp` diga qué toca el guest
-- [x] Comprobar con un `.bin` ARM trivial (`tools/ipod_classic/mktestbin.py`)
+- [x] `-kernel`-style boot path: load a binary at `0x08000000` and
+      put the PC there (skip the bootrom, which we don't have)
+- [x] The 32 not-yet-modeled peripherals registered as
+      `create_unimplemented_device()`, so that `-d unimp` says what the guest touches
+- [x] Check with a trivial ARM `.bin` (`tools/ipod_classic/mktestbin.py`)
 
-**Resultado:** `-M iPod-Classic` aparece en `-M help` y el binario de prueba
-escribe `S5L8702 alive` por la consola serie. Eso valida de golpe: PC inicial en
-`0x08000000`, SDRAM mapeada, y UART0 en la dirección correcta.
+**Result:** `-M iPod-Classic` appears in `-M help` and the test binary
+writes `S5L8702 alive` to the serial console. That validates in one go: initial
+PC at `0x08000000`, SDRAM mapped, and UART0 at the correct address.
 
 ```
 $ ./qemu-system-arm -M iPod-Classic -kernel hello.bin \
@@ -1131,19 +1131,19 @@ $ ./qemu-system-arm -M iPod-Classic -kernel hello.bin \
 S5L8702 alive
 ```
 
-### H2 — Consola serie e interrupciones ✅
-- [x] VIC0/VIC1 (PL192) en `0x38E00000` / `0x38E01000`
-- [x] Reloj/PLL en `0x3C500000` (modelo reutilizado del iPod Touch)
-- [x] UART0 en `0x3CC00000` (exynos4210_uart, IRQ 24)
-- [x] Timers en `0x3C700000` — bloque completo escrito de cero
+### H2 — Serial console and interrupts ✅
+- [x] VIC0/VIC1 (PL192) at `0x38E00000` / `0x38E01000`
+- [x] Clock/PLL at `0x3C500000` (model reused from the iPod Touch)
+- [x] UART0 at `0x3CC00000` (exynos4210_uart, IRQ 24)
+- [x] Timers at `0x3C700000` — complete block written from scratch
       (`hw/arm/ipod_classic/ipod_classic_timer.c`)
-- [x] Alias de IRAM0 en la dirección `0x0`, que es de donde el ARM926 coge las
-      excepciones
-- [x] Ruta de interrupción verificada de extremo a extremo
+- [x] IRAM0 alias at address `0x0`, which is where the ARM926 takes its
+      exceptions from
+- [x] Interrupt path verified end to end
 
-**Resultado:** el test `tools/ipod_classic/tests/timer_irq.c` configura el timer
-B a 10 kHz exactamente como Rockbox, instala una tabla de vectores en `0x0`,
-desenmascara la IRQ 8 en VIC0 y cuenta interrupciones:
+**Result:** the test `tools/ipod_classic/tests/timer_irq.c` configures timer
+B at 10 kHz exactly like Rockbox, installs a vector table at `0x0`,
+unmasks IRQ 8 in VIC0 and counts interrupts:
 
 ```
 S5L8702 timer test
@@ -1153,191 +1153,191 @@ got 0x00000005 timer interrupts
 TIMER IRQ OK
 ```
 
-El log de `-d unimp,guest_errors` sale vacío: ningún acceso a periférico no
-modelado, ninguna dirección fuera de sitio.
+The `-d unimp,guest_errors` log comes out empty: no access to an unmodeled
+peripheral, no out-of-place address.
 
-#### El bloque de timers
+#### The timer block
 
-Reconstruido a partir de `timer-s5l8702.c`, `kernel-s5l8702.c` y el comentario
-sobre `TSTAT` en `s5l87xx.h`:
+Reconstructed from `timer-s5l8702.c`, `kernel-s5l8702.c` and the comment
+on `TSTAT` in `s5l87xx.h`:
 
-- 8 canales. **A–D de 16 bits comparten la IRQ 8**; **E–H de 32 bits comparten
-  la IRQ 7**.
-- El estado de interrupción de A–D vive **dentro de `CON[18:16]`**, con los
-  habilitadores en `CON[14:12]` — por eso Rockbox escribe `TBCON = TBCON` para
-  acusar recibo, y por eso comprueba `TACON & (TACON >> 4) & 0x7000`.
-- El de E–H vive en `TSTAT` (`0x118`), tres bits por canal: E en 24, F en 16,
-  G en 8, H en 0. Se limpia escribiendo unos.
-- Selector de reloj en `CON[10:8]`: /2, /4, /16, /64, o directo para E–H.
-  `CON[6]` elige ECLK (12 MHz, el cristal) frente a PCLK.
-- **PCLK no está modelado**: el bloque de reloj es un fichero de registros sin
-  lógica, así que no sabemos qué PLL pidió el guest. Los dos timers que usa
-  Rockbox eligen ECLK, así que de momento se trata PCLK como ECLK y se avisa
-  por `-d unimp` si algún guest lo selecciona de verdad.
-- Solo se emula el modo intervalo, que es el único que usa Rockbox. Los demás
-  se reportan como no implementados en vez de hacer algo incorrecto en silencio.
+- 8 channels. **The 16-bit A–D share IRQ 8**; **the 32-bit E–H share
+  IRQ 7**.
+- The interrupt status of A–D lives **inside `CON[18:16]`**, with the
+  enables in `CON[14:12]` — which is why Rockbox writes `TBCON = TBCON` to
+  acknowledge, and why it checks `TACON & (TACON >> 4) & 0x7000`.
+- That of E–H lives in `TSTAT` (`0x118`), three bits per channel: E at 24, F at 16,
+  G at 8, H at 0. It is cleared by writing ones.
+- Clock selector in `CON[10:8]`: /2, /4, /16, /64, or direct for E–H.
+  `CON[6]` chooses ECLK (12 MHz, the crystal) versus PCLK.
+- **PCLK is not modeled**: the clock block is a register file with no
+  logic, so we don't know which PLL the guest asked for. The two timers Rockbox
+  uses choose ECLK, so for now PCLK is treated as ECLK and a warning is issued
+  via `-d unimp` if any guest really selects it.
+- Only interval mode is emulated, which is the only one Rockbox uses. The others
+  are reported as unimplemented instead of silently doing something wrong.
 
-#### IRAM0 en la dirección 0
+#### IRAM0 at address 0
 
-El `crt0.S` de Rockbox lo dice sin ambigüedad:
+Rockbox's `crt0.S` says it unambiguously:
 
 > *we do not want to execute from 0x0 as iram will be mapped there*
 > *copy vector section to start of IRAM0 (it will be mapped to 0x0)*
 
-Así que IRAM0 aparece también en `0x0`, que es de donde el ARM926 toma las
-excepciones. Está modelado como alias. **Lo que aún no sabemos** es si la
-bootrom ocupa esa dirección primero y el alias solo aparece tras un remap, como
-en el S5L8720. Hasta que haya un volcado de bootrom que lo aclare, si se pasa
-una bootrom esta se queda con la dirección.
+So IRAM0 also appears at `0x0`, which is where the ARM926 takes its
+exceptions from. It is modeled as an alias. **What we don't know yet** is whether the
+bootrom occupies that address first and the alias only appears after a remap, as
+on the S5L8720. Until there is a bootrom dump that clears it up, if a
+bootrom is passed, it gets the address.
 
-### H2b — Arrancar Rockbox ❌ nunca se intentó
-- [ ] Toolchain: `apt install gcc-arm-none-eabi` sirve para nuestros tests, pero
-      Rockbox quiere `arm-elf-eabi-gcc` de `tools/rockboxdev.sh`
-- [ ] Compilar el bootloader de Rockbox para ipod6g
-- [ ] Lanzarlo con `-kernel` y seguir `-d unimp` como lista de tareas
+### H2b — Boot Rockbox ❌ never attempted
+- [ ] Toolchain: `apt install gcc-arm-none-eabi` works for our tests, but
+      Rockbox wants `arm-elf-eabi-gcc` from `tools/rockboxdev.sh`
+- [ ] Build the Rockbox bootloader for ipod6g
+- [ ] Launch it with `-kernel` and follow `-d unimp` as a task list
 
-**Criterio de éxito:** ver la salida de depuración de Rockbox por serie.
+**Success criterion:** see Rockbox's debug output over serial.
 
-> **Sigue abierto, y ahora es barato.** Al descifrarse el `osos`, este hito dejó
-> de ser un paso intermedio y se quedó sin hacer. Merecería la pena igualmente:
-> Rockbox y el retailOS ejercitan **conjuntos disjuntos** del hardware — es la
-> lección del bit 26 del 5G — así que arrancarlo encontraría agujeros que el
-> firmware de Apple no toca. Por ejemplo, Rockbox **sí** empuja el cuadro por
-> DMAC0 hacia `LCD_WDATA` (`lcd-s5l8702.c:172`), un camino que este modelo
-> nunca ha ejercitado porque Apple usa el compositor.
+> **Still open, and now cheap.** When the `osos` was decrypted, this milestone
+> stopped being an intermediate step and was left undone. It would be worth it
+> anyway: Rockbox and the retailOS exercise **disjoint sets** of the hardware — that
+> is the lesson of the 5G's bit 26 — so booting it would find holes that
+> Apple's firmware does not touch. For example, Rockbox **does** push the frame via
+> DMAC0 to `LCD_WDATA` (`lcd-s5l8702.c:172`), a path this model
+> has never exercised because Apple uses the compositor.
 
-### H3 — Pantalla ✅ (por otro bloque)
-- [x] Controlador LCD en `0x38300000` — es un puerto de órdenes tipo MPU/8080,
-      no un motor de barrido
-- [x] Scanout 320×240 RGB565 a `ui/console`
-- [ ] Ventanas en `0x39200000` (IRQ 14) — **el retailOS apenas las toca**
+### H3 — Display ✅ (via another block)
+- [x] LCD controller at `0x38300000` — it is an MPU/8080-style command port,
+      not a scanning engine
+- [x] 320×240 RGB565 scanout to `ui/console`
+- [ ] Windows at `0x39200000` (IRQ 14) — **the retailOS barely touches them**
 
-**Criterio de éxito:** el logo o el menú de Rockbox aparece en la ventana SDL.
+**Success criterion:** the Rockbox logo or menu appears in the SDL window.
 
-> **Cumplido con el retailOS, no con Rockbox, y la pieza no era la que ponía
-> aquí.** Los píxeles no salen del bloque de LCD ni de `0x39200000`: salen de
-> **`0x38900000`, un compositor que ninguna fuente externa nombra** y que este
-> plan no podía prever. El bloque de LCD sólo fija la ventana y presenta.
-> Medido: **75 463 de 76 800 píxeles, 404 colores**, y la imagen mirada. Ver
+> **Met with the retailOS, not with Rockbox, and the piece was not the one listed
+> here.** The pixels do not come from the LCD block nor from `0x39200000`: they come
+> from **`0x38900000`, a compositor that no external source names** and that this
+> plan could not foresee. The LCD block only sets the window and presents.
+> Measured: **75 463 of 76 800 pixels, 404 colors**, and the image looked at. See
 > [11](11-classic6g-retailos.md) §13.
 
-### H4 — Entrada ✅
-- [x] Click wheel en `0x3C200000` (IRQ 23), mapeado a teclado
-- [x] GPIO — un pin, el 86, que es el que la interfaz espera
+### H4 — Input ✅
+- [x] Click wheel at `0x3C200000` (IRQ 23), mapped to keyboard
+- [x] GPIO — one pin, 86, which is the one the interface expects
 
-**Criterio de éxito:** navegar por el menú de Rockbox.
+**Success criterion:** navigate the Rockbox menu.
 
-> **Cumplido con el retailOS.** La rueda mueve el resaltado (**8 000 píxeles por
-> giro sobre un suelo de ruido de 0**) y el botón central entra en la pantalla
-> siguiente, en el idioma que estaba resaltado.
-> `sh tools/ipod_classic/navtest.sh` lo comprueba y decide.
+> **Met with the retailOS.** The wheel moves the highlight (**8 000 pixels per
+> turn over a noise floor of 0**) and the center button enters the next
+> screen, in the language that was highlighted.
+> `sh tools/ipod_classic/navtest.sh` checks it and decides.
 >
-> **Y MENU ya vuelve atrás**, desde el §18 de [11](11-classic6g-retailos.md):
-> no era la entrada, era el compositor, que seguía dibujando una capa que el
-> huésped había apagado y que tapaba la interfaz entera. Medido y **mirado**:
-> desde el menú principal, Enter entra en Música y MENU devuelve **el mismo
-> fotograma** del que se salió (0 px de diferencia en la carrera buena). Al
-> destaparse la interfaz cambiaron las cifras: entrar con Enter son ahora
-> **~19 340 px**, no los 50 540 de cuando la capa muerta estaba encima, y un
-> giro en el menú principal mueve **la lista y el panel a la vez**.
+> **And MENU now goes back**, since §18 of [11](11-classic6g-retailos.md):
+> it was not the input, it was the compositor, which kept drawing a layer the
+> guest had turned off and that covered the entire interface. Measured and **looked
+> at**: from the main menu, Enter goes into Music and MENU returns **the same
+> frame** it left from (0 px of difference in the good run). When the interface
+> was uncovered the figures changed: entering with Enter is now
+> **~19 340 px**, not the 50 540 from when the dead layer was on top, and a
+> turn in the main menu moves **the list and the panel at the same time**.
 >
-> **Lo que falta:** el huésped tira un SELECT de cada tres o cuatro y no se sabe
-> por qué; el sospechoso está en el §18.8. Ver también el §19.
+> **What is missing:** the guest drops one SELECT in every three or four and it is
+> not known why; the suspect is in §18.8. See also §19.
 >
-> Y la mitad del trabajo no era la rueda: el despachador de teclas del retailOS
-> consulta el **interruptor de bloqueo del PMU** y tiraba todos los botones en
-> silencio. El giro no pasa por ahí, así que el fallo parecía de la rueda.
+> And half the work was not the wheel: the retailOS key dispatcher
+> checks the **PMU's hold switch** and was silently dropping all buttons.
+> The turn does not go through there, so the failure looked like the wheel's.
 
-### H5 — Almacenamiento ✅
-- [x] Controlador ATA en `0x38700000` (IRQ 29), con **DMA**, respaldado por un
-      archivo de imagen de disco
-- [ ] Alternativa/complemento: CE-ATA sobre SDCI en `0x38b00000` (IRQ 44) — no
-      hace falta, el retailOS usa el ATA paralelo
+### H5 — Storage ✅
+- [x] ATA controller at `0x38700000` (IRQ 29), with **DMA**, backed by a
+      disk image file
+- [ ] Alternative/complement: CE-ATA over SDCI at `0x38b00000` (IRQ 44) — not
+      needed, the retailOS uses parallel ATA
 
-**Criterio de éxito:** Rockbox monta el FAT32 del disco y reproduce un archivo.
+**Success criterion:** Rockbox mounts the disk's FAT32 and plays a file.
 
-> **Cumplido con el retailOS**, y la parte que costó no fue el ATA: sus dos
-> lecturas por DMA terminaban desde el principio. Lo que faltaba era **DMAC0**,
-> un PL080 que QEMU ya traía, y sin el cual un `memcpy` posterior dormía para
-> siempre en un semáforo sin *timeout*. El retailOS monta la partición `rsrc`
-> como volumen 4 y lee sus tipografías de `\Resources\Fonts\`. Ver
+> **Met with the retailOS**, and the part that was hard was not the ATA: its two
+> DMA reads completed from the start. What was missing was **DMAC0**,
+> a PL080 that QEMU already shipped, without which a later `memcpy` slept
+> forever on a semaphore with no *timeout*. The retailOS mounts the `rsrc` partition
+> as volume 4 and reads its fonts from `\Resources\Fonts\`. See
 > [11](11-classic6g-retailos.md) §14.
 
 ### H6 — Audio ❌
-- [ ] I²S en `0x3CA00000` + códec CS42L55 por I²C
+- [ ] I²S at `0x3CA00000` + CS42L55 codec over I²C
 
-> Sigue sin hacerse, en las dos máquinas. **No suena nada.**
+> Still not done, on either machine. **Nothing makes a sound.**
 
-### H7 (especulativo) — el OS de Apple ✅ (y no como estaba previsto)
-- [ ] ~~Modelar el motor AES en `0x38c00000` con la clave GID del S5L8702~~
-- [ ] ~~Bootrom del S5L8702 (hace falta un volcado)~~
-- [x] **Descifrar y arrancar `osos`**
+### H7 (speculative) — Apple's OS ✅ (and not as planned)
+- [ ] ~~Model the AES engine at `0x38c00000` with the S5L8702 GID key~~
+- [ ] ~~S5L8702 bootrom (a dump is needed)~~
+- [x] **Decrypt and boot `osos`**
 
-Este hito depende de material que ahora mismo no tenemos. Se replantea cuando
-lleguemos.
+This milestone depends on material we don't have right now. It will be reconsidered
+when we get there.
 
-> **Y se replanteó solo.** Ninguno de los dos primeros puntos hizo falta:
-> - **El AES no hay que modelarlo**, porque quien descifra es el aparato real.
->   El `osos` sale en claro por USB en 1,2 s con emCORE (`b71d16f3d`).
-> - **La bootrom no hay que volcarla**, y además **no se puede**: tras el
->   arranque devuelve una constante por banco de 16 KiB
->   ([10](10-classic6g-emcore.md) §4). En su lugar la máquina reproduce a mano
->   el bloque de parámetros que dejaba en lo alto de IRAM1 — tres campos, y ni
->   uno más.
+> **And it reconsidered itself.** Neither of the first two items was needed:
+> - **The AES does not have to be modeled**, because the one decrypting is the real device.
+>   The `osos` comes out in the clear over USB in 1.2 s with emCORE (`b71d16f3d`).
+> - **The bootrom does not have to be dumped**, and moreover **it can't be**: after
+>   boot it returns one constant per 16 KiB bank
+>   ([10](10-classic6g-emcore.md) §4). Instead the machine reproduces by hand
+>   the parameter block it left at the top of IRAM1 — three fields, and not
+>   one more.
 >
-> Es el hito que estaba marcado como especulativo y fue el primero que se
-> cumplió. La crónica está en [12-historia-6g.md](12-historia-6g.md).
+> It is the milestone that was marked as speculative and it was the first one to be
+> met. The chronicle is in [12-history-6g.md](12-history-6g.md).
 
-## Estado actual (10 de agosto de 2026)
+## Current status (August 10, 2026)
 
-> **Corregido dos veces.** Primero decía *"En H0 completo, empezando H1"*, que
-> llevaba unos 50 commits sin tocarse. Después decía que el Classic *"no arranca
-> firmware real y no lo hará mientras el `osos` siga cifrado"*, y eso dejó de ser
-> cierto el 9 de agosto por la tarde. Esta línea final del documento es el sitio
-> que más veces se ha quedado atrás: si tocas algo, empieza por aquí.
+> **Corrected twice.** First it said *"H0 complete, starting H1"*, which
+> had gone untouched for about 50 commits. Then it said that the Classic *"does not boot
+> real firmware and will not as long as the `osos` remains encrypted"*, and that stopped
+> being true on the afternoon of August 9. This final line of the document is the place
+> that has fallen behind most often: if you touch something, start here.
 
-**iPod Video 5G (`iPod-Video`, PP5022C)** — va muy por delante de lo que
-describen los hitos H0–H7, que son los del Classic:
+**iPod Video 5G (`iPod-Video`, PP5022C)** — is far ahead of what
+milestones H0–H7 describe, which are those of the Classic:
 
-- **Rockbox** arranca hasta el menú y se navega con la rueda.
-- **El retailOS de Apple** arranca, dibuja su interfaz y se navega: pantalla de
-  idioma → menú principal → submenú de *Videos* → atrás.
-- Lo que falta: **audio** (ni I²S ni códec), **USB**, y ejecutar de verdad el
-  firmware del VideoCore, del que hoy sólo se modela el protocolo. Y **la rueda
-  no mueve el resaltado en la pantalla de idioma**, medido y no diagnosticado.
+- **Rockbox** boots to the menu and can be navigated with the wheel.
+- **Apple's retailOS** boots, draws its interface and can be navigated: language
+  screen → main menu → *Videos* submenu → back.
+- What is missing: **audio** (neither I²S nor codec), **USB**, and actually running the
+  VideoCore firmware, of which only the protocol is modeled today. And **the wheel
+  does not move the highlight on the language screen**, measured and not diagnosed.
 
-**iPod classic 6G (`iPod-Classic`, S5L8702)** — **arranca el retailOS original
-de Apple y se navega.** H0, H1, H2, H3, H4, H5 y H7 hechos; H2b (Rockbox) nunca
-se intentó y H6 (audio) sigue sin hacerse.
+**iPod classic 6G (`iPod-Classic`, S5L8702)** — **boots Apple's original
+retailOS and can be navigated.** H0, H1, H2, H3, H4, H5 and H7 done; H2b (Rockbox) was never
+attempted and H6 (audio) is still not done.
 
-- Catorce bloques de periférico con comportamiento de verdad (más el PMU detrás
-  del I²C), listados en [02-s5l8702-hardware.md](02-s5l8702-hardware.md). Los
-  otros 24 son `create_unimplemented_device()`.
-- La pantalla de selección de idioma: **75 463 de 76 800 píxeles, 404 colores**,
-  entre 22 y 30 s de reloj de pared. `sh tools/ipod_classic/navtest.sh` la
-  arranca, la mueve con la rueda y **decide**.
-- **Se navega de verdad**: la pantalla de idiomas lleva al menú principal, un
-  giro allí mueve **la lista y el panel derecho a la vez**, Enter entra en
-  Música y **MENU vuelve al fotograma exacto** del que se salió. Los dos puntos
-  que aquí figuraban como pendientes —«MENU no vuelve» y «el panel no cambia»—
-  eran **un solo fallo nuestro y no del `TimerEventManager`**: el compositor
-  dibujaba una capa que el huésped había apagado. Ver
+- Fourteen peripheral blocks with real behavior (plus the PMU behind
+  the I²C), listed in [02-s5l8702-hardware.md](02-s5l8702-hardware.md). The
+  other 24 are `create_unimplemented_device()`.
+- The language selection screen: **75 463 of 76 800 pixels, 404 colors**,
+  between 22 and 30 s of wall-clock time. `sh tools/ipod_classic/navtest.sh` boots
+  it, moves it with the wheel and **decides**.
+- **It really navigates**: the language screen leads to the main menu, a
+  turn there moves **the list and the right panel at the same time**, Enter goes into
+  Music and **MENU returns to the exact frame** it left from. The two items
+  that were listed here as pending —"MENU does not go back" and "the panel does not change"—
+  were **a single bug of ours and not of the `TimerEventManager`**: the compositor
+  was drawing a layer the guest had turned off. See
   [11](11-classic6g-retailos.md) §18.
-- **Lo que falta, en orden**: (1) el huésped **tira un SELECT de cada tres o
-  cuatro**, sin causa encontrada (§18.8, §19.6); (2) `TICNTH`/`TICNTL` del
-  bloque de temporizadores no están decodificados y leen cero — inofensivo para
-  el retailOS, mortal para quien gire sobre `FIVE_USEC_TIMER` (§19.3); (3)
-  audio, USB, NAND y CE-ATA.
-- **Sin disco no hay imagen**, y es del huésped: no hay ninguna tipografía
-  dentro de la imagen del firmware.
+- **What is missing, in order**: (1) the guest **drops one SELECT in every three or
+  four**, with no cause found (§18.8, §19.6); (2) `TICNTH`/`TICNTL` of the
+  timer block are not decoded and read zero — harmless for
+  the retailOS, deadly for anyone spinning on `FIVE_USEC_TIMER` (§19.3); (3)
+  audio, USB, NAND and CE-ATA.
+- **Without a disk there is no image**, and that is on the guest: there is no font
+  inside the firmware image.
 
-Ver también [08-s5l8702-fuentes-externas.md](08-s5l8702-fuentes-externas.md):
-`freemyipod/qemu@s5l8702-dev` tiene un modelo del S5L8702 con **más bloques**
-que el nuestro (AES, SHA, JPEG, NAND, SPI, watchdog, USB). Dos diferencias que
-conviene tener presentes antes de compararlos: su máquina **arranca desde una
-bootrom**, que es lo que aquí no se puede volcar
-([10](10-classic6g-emcore.md) §4), y su lista de dispositivos **no incluye
-`0x38900000`**, que es el bloque del que salen los píxeles en este árbol.
+See also [08-s5l8702-external-sources.md](08-s5l8702-external-sources.md):
+`freemyipod/qemu@s5l8702-dev` has an S5L8702 model with **more blocks**
+than ours (AES, SHA, JPEG, NAND, SPI, watchdog, USB). Two differences
+worth keeping in mind before comparing them: their machine **boots from a
+bootrom**, which is what cannot be dumped here
+([10](10-classic6g-emcore.md) §4), and their device list **does not include
+`0x38900000`**, which is the block the pixels come from in this tree.
 
-La crónica completa de cómo se llegó hasta aquí, con las hipótesis que
-resultaron falsas, está en [12-historia-6g.md](12-historia-6g.md).
+The complete chronicle of how we got here, with the hypotheses that
+turned out to be false, is in [12-history-6g.md](12-history-6g.md).

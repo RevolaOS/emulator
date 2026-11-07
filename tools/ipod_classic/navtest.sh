@@ -34,7 +34,7 @@
 #     now and then, 23 px at x=145..151, y=4..13 -- one run of this script
 #     measured 0 there and the next 23. So the floor is checked against a limit
 #     of 200 px, not against zero, and the measured value is printed. Above the
-#     limit the whole run is a SUSPENSO, because every threshold below assumes
+#     limit the whole run is a FAIL, because every threshold below assumes
 #     nothing moves that could be mistaken for navigation. 06-menu-idle does the
 #     same for the main menu, but only for the LIST half: the preview pane there
 #     is not still and should not be, because the label under the icon is longer
@@ -96,11 +96,11 @@ osos="$root/assets/classic6g/osos_decrypted.bin"
 out=${1:-$HOME/6g/nav}
 disk=${2:-$HOME/6g/E.img}
 
-[ -x "$qemu" ] || { echo "no encuentro $qemu; compila primero" >&2; exit 1; }
-[ -f "$osos" ] || { echo "no encuentro $osos" >&2; exit 1; }
+[ -x "$qemu" ] || { echo "cannot find $qemu; build it first" >&2; exit 1; }
+[ -f "$osos" ] || { echo "cannot find $osos" >&2; exit 1; }
 [ -f "$disk" ] || {
-    echo "no encuentro el disco $disk." >&2
-    echo "Se fabrica asi (wiki/11 sec.15):" >&2
+    echo "cannot find the disk $disk." >&2
+    echo "Build it like this (wiki/11 sec.15):" >&2
     echo "  truncate -s 64M \$HOME/6g/fat32.img" >&2
     echo "  mkfs.vfat -F 32 -n IPOD \$HOME/6g/fat32.img" >&2
     echo "  python3 tools/ipod_classic/mkdisk6g4k.py \$HOME/6g/E.img \\" >&2
@@ -132,11 +132,11 @@ sleep 1
 strays=$(ps -eo comm= 2>/dev/null | grep -c -i -E 'qemu|ipod-classic-run' || true)
 [ -n "$strays" ] || strays=0
 if [ "$strays" -gt 0 ]; then
-    echo "*** ATENCION: hay $strays proceso(s) tipo QEMU corriendo ADEMAS de"
-    echo "*** este. 'pkill -x qemu-system-arm' no toca los que se llaman de"
-    echo "*** otra forma (qemu-evt, ipod-classic-run). Con la maquina cargada"
-    echo "*** el huesped se reinicia a diskmode y el veredicto NO valdra."
-    echo "*** Mira 'ps aux | grep -i qemu' y 'uptime' antes de seguir."
+    echo "*** WARNING: $strays QEMU-like process(es) running IN ADDITION to"
+    echo "*** this one. 'pkill -x qemu-system-arm' does not touch the ones with"
+    echo "*** other names (qemu-evt, ipod-classic-run). With the machine loaded"
+    echo "*** the guest resets to diskmode and the verdict will NOT be valid."
+    echo "*** Check 'ps aux | grep -i qemu' and 'uptime' before continuing."
     echo
 fi
 
@@ -193,18 +193,18 @@ echo
 resets=$(grep -c "software reset" "$out/qemu.err" 2>/dev/null || true)
 [ -n "$resets" ] || resets=0
 if [ "$resets" -gt 0 ]; then
-    echo "*** ATENCION: el huesped se reinicio $resets vez/veces durante la"
-    echo "*** carrera (SWRCON = 0xaa5 en stderr). Todos los tiempos de abajo"
-    echo "*** se cuentan desde el encendido, asi que las capturas caen en"
-    echo "*** pantallas equivocadas y el veredicto NO vale. Repite la carrera."
-    echo "*** Antes de buscar culpables: ps aux | grep qemu, y uptime."
+    echo "*** WARNING: the guest reset $resets time(s) during the run"
+    echo "*** (SWRCON = 0xaa5 in stderr). All the timings below are counted"
+    echo "*** from power-on, so the screenshots land on the wrong screens"
+    echo "*** and the verdict is NOT valid. Repeat the run."
+    echo "*** Before looking for culprits: ps aux | grep qemu, and uptime."
     echo
 fi
-echo "=== lo que dijo el modelo de la rueda ==="
-grep WHEELTRACE "$out/qemu.err" || echo "  (nada: WHEELTRACE no imprimio)"
+echo "=== what the wheel model said ==="
+grep WHEELTRACE "$out/qemu.err" || echo "  (nothing: WHEELTRACE printed nothing)"
 echo
-echo "=== repintados (escrituras de la direccion de origen de la capa 0) ==="
-echo "  $(cat "$out/disp.txt")   (una carrera en reposo son 10)"
+echo "=== repaints (writes of the layer 0 source address) ==="
+echo "  $(cat "$out/disp.txt")   (an idle run is 10)"
 echo
 
 python3 - "$out" <<'EOF'
@@ -244,7 +244,7 @@ def differ(a, b, x0=0, x1=None, w=320):
 
 shots = sorted(glob.glob(os.path.join(out, "*.ppm")))
 if not shots:
-    print("NO HAY CAPTURAS: la maquina no llego a arrancar")
+    print("NO SCREENSHOTS: the machine never booted")
     raise SystemExit(1)
 
 prev = None
@@ -260,7 +260,7 @@ for path in shots:
     n = sum(1 for i in range(0, len(data), 3) if data[i:i + 3] != b"\x00\x00\x00")
     lit[name] = n
     if prev is None:
-        print("%-20s %6d px encendidos" % (name, n))
+        print("%-20s %6d px lit" % (name, n))
     else:
         d = differ(data, prev)
         # Where did it change? The list is the left 160 columns; the preview
@@ -269,8 +269,8 @@ for path in shots:
         left = differ(data, prev, 0, 160)
         diffs[name] = d
         lefts[name] = left
-        print("%-20s %6d px encendidos   %6d px distintos (%d en la lista, "
-              "%d en el panel)" % (name, n, d, left, d - left))
+        print("%-20s %6d px lit   %6d px differ (%d in the list, "
+              "%d in the pane)" % (name, n, d, left, d - left))
     prev = data
 
 print()
@@ -301,47 +301,47 @@ def floor_check(name, where, half=None):
     global ok
     d = diffs.get(name) if half is None else lefts.get(name)
     if d is None:
-        print("SUSPENSO: falta %s, no se puede comprobar el suelo de %s"
+        print("FAIL: %s is missing, cannot check the floor of %s"
               % (name, where))
         ok = False
     elif d > FLOOR_MAX:
-        # Y esto SUSPENDE la prueba, no es un aviso. Todo el veredicto de abajo
-        # descansa en que en estas pantallas no se mueve nada que pueda
-        # confundirse con navegar. Si deja de ser cierto, los umbrales dejan de
-        # distinguir "se movio el resaltado" de "parpadeo algo", y un test que
-        # sigue diciendo OK con su premisa rota es peor que ninguno.
-        print("SUSPENSO: %s cambia %d px sin tocar nada, mas de los %d que "
-              "cuesta el icono de la bateria. El suelo de ruido de %s ya no "
-              "vale y los umbrales de abajo tampoco."
+        # And this FAILS the test, it is not a warning. The whole verdict below
+        # rests on nothing moving on these screens that could be mistaken for
+        # navigation. If that stops being true, the thresholds no longer tell
+        # "the highlight moved" from "something flickered", and a test that
+        # keeps saying OK with its premise broken is worse than none.
+        print("FAIL: %s changes %d px without touching anything, more than "
+              "the %d the battery icon costs. The noise floor of %s is no "
+              "longer valid and neither are the thresholds below."
               % (name, d, FLOOR_MAX, where))
         ok = False
     else:
-        print("  suelo de %s: %d px (limite %d)" % (where, d, FLOOR_MAX))
+        print("  floor of %s: %d px (limit %d)" % (where, d, FLOOR_MAX))
 
-floor_check("01-idle-again", "la pantalla de idiomas")
-floor_check("06-menu-idle", "la LISTA del menu principal", half="left")
+floor_check("01-idle-again", "the language screen")
+floor_check("06-menu-idle", "the main menu LIST", half="left")
 if "06-menu-idle" in diffs:
-    print("  (el panel del menu principal NO esta quieto: %d px, y es correcto "
-          "-- la etiqueta larga se desplaza sola. Por eso el umbral del panel "
-          "es 3000 y no 1.)" % (diffs["06-menu-idle"] - lefts["06-menu-idle"]))
+    print("  (the main menu pane is NOT still: %d px, and that is correct "
+          "-- the long label scrolls by itself. That is why the pane "
+          "threshold is 3000 and not 1.)" % (diffs["06-menu-idle"] - lefts["06-menu-idle"]))
 
 def verdict(name, what, hard=True):
     global ok
     d = diffs.get(name)
-    tag = "" if hard else "   [informativo]"
+    tag = "" if hard else "   [informational]"
     if d is None:
-        print("  %-20s SIN CAPTURA%s" % (name, tag))
+        print("  %-20s NO SCREENSHOT%s" % (name, tag))
         if hard:
             ok = False
     elif d >= 3000:
         print("  %-20s %6d px  -> %s%s" % (name, d, what, tag))
     elif d >= 1000:
-        print("  %-20s %6d px  -> algo se movio, pero menos de lo que cuesta "
-              "un elemento entero%s" % (name, d, tag))
+        print("  %-20s %6d px  -> something moved, but less than a whole "
+              "item costs%s" % (name, d, tag))
         if hard:
             ok = False
     else:
-        print("  %-20s %6d px  -> NO. Eso no es navegar%s" % (name, d, tag))
+        print("  %-20s %6d px  -> NO. That is not navigation%s" % (name, d, tag))
         if hard:
             ok = False
 
@@ -350,17 +350,17 @@ def verdict_both_halves(name, hard=True):
     global ok
     d, l = diffs.get(name), lefts.get(name)
     if d is None:
-        print("  %-20s SIN CAPTURA" % name)
+        print("  %-20s NO SCREENSHOT" % name)
         if hard:
             ok = False
         return
     r = d - l
     if l >= 3000 and r >= 3000:
-        print("  %-20s lista %5d px + panel %5d px  -> el resaltado se movio "
-              "Y el panel lo siguio" % (name, l, r))
+        print("  %-20s list %5d px + pane %5d px  -> the highlight moved "
+              "AND the pane followed it" % (name, l, r))
     else:
-        print("  %-20s lista %5d px + panel %5d px  -> NO: hacen falta las "
-              "dos mitades" % (name, l, r))
+        print("  %-20s list %5d px + pane %5d px  -> NO: both halves "
+              "are needed" % (name, l, r))
         if hard:
             ok = False
 
@@ -374,7 +374,7 @@ def verdict_same_as(name, ref, tol=1500, only_if=None):
     on the run that went in: 0 px."""
     global ok
     if name not in frames or ref not in frames:
-        print("  %-20s SIN CAPTURA" % name)
+        print("  %-20s NO SCREENSHOT" % name)
         ok = False
         return
     # A trap worth guarding: if SELECT never got us out of the main menu, then
@@ -382,55 +382,55 @@ def verdict_same_as(name, ref, tol=1500, only_if=None):
     # reasons -- we never left. Without this the test would pass hardest
     # exactly when the navigation did nothing at all.
     if only_if is not None and diffs.get(only_if, 0) < 3000:
-        print("  %-20s no se puede decir nada: %s no llego a cambiar de "
-              "pantalla, asi que no hubo viaje de vuelta que medir"
+        print("  %-20s nothing can be said: %s never changed the "
+              "screen, so there was no return trip to measure"
               % (name, only_if))
         ok = False
         return
     d = differ(frames[name], frames[ref])
     if d <= tol:
-        print("  %-20s %6d px de diferencia con %s  -> MENU VOLVIO A LA MISMA "
-              "PANTALLA" % (name, d, ref))
+        print("  %-20s %6d px different from %s  -> MENU WENT BACK TO THE SAME "
+              "SCREEN" % (name, d, ref))
     else:
-        print("  %-20s %6d px de diferencia con %s  -> cambio, pero NO es la "
-              "pantalla de la que salimos" % (name, d, ref))
+        print("  %-20s %6d px different from %s  -> changed, but it is NOT "
+              "the screen we left" % (name, d, ref))
         ok = False
 
-print("VEREDICTO")
-print(" la rueda en la pantalla de idiomas:")
-verdict("02-wheel-fwd",  "el resaltado se movio")
-verdict("03-wheel-fwd2", "el resaltado se movio")
-verdict("04-wheel-back", "el resaltado volvio")
+print("VERDICT")
+print(" the wheel on the language screen:")
+verdict("02-wheel-fwd",  "the highlight moved")
+verdict("03-wheel-fwd2", "the highlight moved")
+verdict("04-wheel-back", "the highlight came back")
 print()
-print(" SELECT, que sale de la pantalla de idiomas al menu principal:")
-verdict("05-select", "SELECT cambio la pantalla")
+print(" SELECT, which leaves the language screen for the main menu:")
+verdict("05-select", "SELECT changed the screen")
 print()
-print(" la rueda en el menu principal -- las DOS mitades:")
+print(" the wheel on the main menu -- BOTH halves:")
 verdict_both_halves("07-menu-wheel")
 verdict_both_halves("08-menu-wheel-back")
 print()
-print(" entrar y VOLVER:")
-verdict("09-into-music", "SELECT entro en Musica")
-verdict("10-menu-back",  "MENU cambio la pantalla")
+print(" going in and coming BACK:")
+verdict("09-into-music", "SELECT entered Music")
+verdict("10-menu-back",  "MENU changed the screen")
 verdict_same_as("10-menu-back", "08-menu-wheel-back", only_if="09-into-music")
 print()
-print(" MENU en lo alto de la pila -- aqui lo correcto es que NO pase nada:")
-print("   en el menu principal no hay pantalla debajo a la que volver, asi que")
-print("   la lista tiene que quedarse quieta. El panel puede moverse: su")
-print("   etiqueta se desplaza sola.")
+print(" MENU at the top of the stack -- here the correct result is that NOTHING happens:")
+print("   on the main menu there is no screen underneath to go back to, so")
+print("   the list has to stay still. The pane may move: its")
+print("   label scrolls by itself.")
 l = lefts.get("11-menu-at-top")
 if l is None:
-    print("  %-20s SIN CAPTURA" % "11-menu-at-top")
+    print("  %-20s NO SCREENSHOT" % "11-menu-at-top")
     ok = False
 elif l <= FLOOR_MAX:
-    print("  %-20s lista %5d px + panel %5d px  -> no navego, que es lo que "
-          "toca" % ("11-menu-at-top", l, diffs["11-menu-at-top"] - l))
+    print("  %-20s list %5d px + pane %5d px  -> did not navigate, which is "
+          "correct" % ("11-menu-at-top", l, diffs["11-menu-at-top"] - l))
 else:
-    print("  %-20s lista %5d px  -> la lista se movio, y desde el menu "
-          "principal MENU no deberia llevar a ninguna parte"
+    print("  %-20s list %5d px  -> the list moved, and from the main "
+          "menu MENU should not lead anywhere"
           % ("11-menu-at-top", l))
     ok = False
 print()
-print("PNGs en %s" % out)
+print("PNGs in %s" % out)
 raise SystemExit(0 if ok else 2)
 EOF

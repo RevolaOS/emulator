@@ -156,14 +156,14 @@ static int32_t ipod_classic_ata_dma_prepare_buf(const IDEDMA *dma,
             !(s->reg[S5L8702_ATA_CFG / 4] & S5L8702_ATA_CFG_WRITE)) {
             static uint64_t rd_ops, rd_bytes;
             /*
-             * Comprobar que los bytes ATERRIZAN. Saber que se lee el sector
-             * correcto no dice que el dato llegue a la memoria del invitado: si
-             * el destino esta mal, el parser ve basura y el reproductor aborta
-             * -- que es exactamente el sintoma. Leer el destino de la
-             * transferencia ANTERIOR (esta ya ha terminado cuando llega la
-             * siguiente) y publicar sus primeras palabras junto al sector del
-             * que venian. Un volcado por el monitor no sirve: los buferes se
-             * reutilizan en segundos.
+             * Check that the bytes LAND. Knowing the right sector is read does
+             * not say the data reaches guest memory: if the destination is
+             * wrong, the parser sees garbage and the player aborts -- which is
+             * exactly the symptom. Read the destination of the PREVIOUS
+             * transfer (it has already finished when the next one arrives) and
+             * print its first words next to the sector they came from. A dump
+             * through the monitor does not work: the buffers are reused within
+             * seconds.
              */
             static uint32_t prev_dst;
             static int64_t prev_sec = -1;
@@ -177,20 +177,19 @@ static int32_t ipod_classic_ata_dma_prepare_buf(const IDEDMA *dma,
                         head[4], head[5], head[6], head[7]);
             }
             /*
-             * OJO: `s->dma_cur` ya se ha adelantado `len` bytes unas lineas mas
-             * arriba, asi que el principio de ESTA transferencia es
-             * `dma_cur - len`. Leer sin restarlo mira el final del bloque y
-             * devuelve ceros, que se lee igual que "el dato no llega" -- un
-             * falso positivo listo para colarse en una conclusion.
+             * CAREFUL: `s->dma_cur` was already advanced by `len` bytes a few
+             * lines above, so the start of THIS transfer is `dma_cur - len`.
+             * Reading without subtracting it looks at the end of the block and
+             * returns zeros, which reads exactly like "the data does not
+             * arrive" -- a false positive ready to slip into a conclusion.
              */
             /*
-             * ANCLA DE TIEMPO DE REPRODUCCION. Todos los sitios con nombre del
-             * mapa heredado disparan tambien en el arranque, asi que no sirven
-             * para abrir una ventana de traza en el momento de reproducir. Una
-             * lectura de un sector DENTRO del fichero de la cancion si es
-             * exclusiva de la reproduccion: ATALBA_LO/HI acotan ese rango (en
-             * bytes) y aqui se publica el PC del invitado que la pidio, que es
-             * codigo del reproductor y sirve de punto de entrada fiable.
+             * PLAYBACK TIME ANCHOR. Every named site in the inherited map also
+             * fires during boot, so none of them can open a trace window at
+             * the moment of playback. A read of a sector INSIDE the song file
+             * is exclusive to playback: ATALBA_LO/HI bound that range (in
+             * bytes) and this prints the guest PC that requested it, which is
+             * player code and serves as a reliable entry point.
              */
             {
                 const char *lo_s = getenv("ATALBA_LO");
@@ -209,10 +208,11 @@ static int32_t ipod_classic_ata_dma_prepare_buf(const IDEDMA *dma,
                                 CPUARMState *e = &ARM_CPU(cs)->env;
                                 pc = (uint32_t)CPU_GET_CLASS(cs)->get_pc(cs);
                                 /*
-                                 * LR y SP del invitado en el momento de pedir el
-                                 * sector: el PC solo da la rutina del driver, que
-                                 * es comun a todo el disco. El LR nombra a QUIEN
-                                 * la llama, y eso ya es codigo del reproductor.
+                                 * Guest LR and SP at the moment the sector is
+                                 * requested: the PC only gives the driver
+                                 * routine, which is shared by the whole disk.
+                                 * The LR names WHO calls it, and that is
+                                 * already player code.
                                  */
                                 lr = (uint32_t)e->regs[14];
                                 sp = (uint32_t)e->regs[13];
@@ -221,16 +221,17 @@ static int32_t ipod_classic_ata_dma_prepare_buf(const IDEDMA *dma,
                                     " pc~0x%08x lr=0x%08x sp=0x%08x\n",
                                     k, byte, pc, lr, sp);
                             /*
-                             * LA CADENA DE LLAMADAS, que es lo que hace falta.
-                             * El LR solo da un nivel. Barriendo la pila y
-                             * quedandose con los valores que caen en el rango de
-                             * codigo del firmware salen las direcciones de
-                             * retorno de los marcos de arriba -- o sea el camino
-                             * desde el reproductor hasta esta lectura. Con la
-                             * pila fija (mismo SP en todas las lecturas) esto es
-                             * estable y repetible. Hay falsos positivos (datos
-                             * que parecen punteros), asi que se publican en
-                             * crudo y se filtran leyendo el desensamblado.
+                             * THE CALL CHAIN, which is what is actually needed.
+                             * The LR only gives one level. Sweeping the stack
+                             * and keeping the values that fall in the
+                             * firmware's code range yields the return
+                             * addresses of the frames above -- that is, the
+                             * path from the player down to this read. With a
+                             * fixed stack (same SP on every read) this is
+                             * stable and repeatable. There are false positives
+                             * (data that looks like pointers), so they are
+                             * printed raw and filtered by reading the
+                             * disassembly.
                              */
                             if (cs && k == 1) {
                                 for (int w = 0; w < 96; w++) {

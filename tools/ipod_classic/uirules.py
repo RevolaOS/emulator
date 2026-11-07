@@ -22,7 +22,7 @@ and then checked against all 1 380 rules in the image:
 The one-byte suffix after the trigger name is why a naive strings(1) shows
 "wheel1" and "button.menu.up1" with a trailing digit while handler and action
 names have none: the digit is not part of the string, it is the field after it.
-Its meaning is DESCONOCIDO -- every rule in the image has '1'.
+Its meaning is UNKNOWN -- every rule in the image has '1'.
 
 Rules come in groups, each group being "u32 count; RULE[count]" padded to four
 bytes, and the groups hang off a bigger container that this does not decode.

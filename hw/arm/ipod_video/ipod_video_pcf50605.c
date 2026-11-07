@@ -145,7 +145,7 @@
  * to bring up a power rail unless the reading is at least 0x12a = 298, out of
  * the literal at 0x264d20.
  *
- * ASSUMPTION: 390 is a choice within what the firmware's own table allows, not
+ * ASSUMED: 390 is a choice within what the firmware's own table allows, not
  * a measurement. It sits between entries 10 (382) and 11 (395), so it reports
  * level 11 of 15, comfortably above the 298 that gates the boot and comfortably
  * clear of both ends of the table, where a rounding error either way would

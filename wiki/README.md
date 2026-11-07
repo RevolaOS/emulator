@@ -1,162 +1,163 @@
-# Emulación de iPods clickwheel en QEMU
+# Emulating clickwheel iPods in QEMU
 
-Bitácora de ingeniería inversa y desarrollo del port de QEMU-iOS. Rama de
-trabajo: `ipod_classic_6g`, partiendo de `ipod_touch_2g` (QEMU 8.2.0).
+Reverse-engineering and development log of the QEMU-iOS port. Working
+branch: `ipod_classic_6g`, starting from `ipod_touch_2g` (QEMU 8.2.0).
 
-Empezó apuntando al **iPod classic 6G** (S5L8702) y se topó con que su firmware
-está cifrado con una clave que vive en el silicio. Al aparecer un **iPod Video
-5G** físico, cuyo firmware está en claro, el objetivo de arrancar software real
-se movió allí. El 9 de agosto de 2026 el bloqueo del Classic cayó: no hacía
-falta extraer la clave, sino que **descifrara el propio aparato** — el iPod
-físico corriendo emCORE suelta el `osos` en claro por USB. Y el 10 de agosto el
-Classic pasó de arrancar a **verse** y de verse a **navegarse**.
+It started out targeting the **iPod classic 6G** (S5L8702) and ran into the
+fact that its firmware is encrypted with a key that lives in the silicon. When
+a physical **iPod Video 5G** turned up, whose firmware is in the clear, the
+goal of booting real software moved there. On August 9, 2026 the Classic's
+blocker fell: there was no need to extract the key, but rather to have **the
+device itself decrypt** — the physical iPod running emCORE hands out the
+`osos` in the clear over USB. And on August 10 the Classic went from booting
+to **being seen** and from being seen to **being navigated**.
 
-**Hoy las dos máquinas arrancan el firmware original de Apple y las dos se
-navegan.**
+**Today both machines boot Apple's original firmware and both can be
+navigated.**
 
-| Máquina | SoC | Estado |
+| Machine | SoC | Status |
 |---|---|---|
-| `iPod-Video` | PP5022C | **Arranca los dos firmwares del aparato real**: Rockbox hasta el menú, navegable; y el retailOS de Apple dibujando su interfaz, con menús y submenús navegables |
-| `iPod-Classic` | S5L8702 | **Arranca el retailOS de Apple y se navega**: kernel RTXC, ATA con DMA, volumen `rsrc` montado, tipografías, la pantalla de selección de idioma — 75 463 de 76 800 píxeles — que la rueda mueve, y desde ella **el menú principal en el idioma elegido, con el panel derecho siguiendo al resaltado, Enter entrando en Música y MENU volviendo al mismo fotograma**. Falta: el huésped tira un SELECT de cada tres o cuatro, sin causa encontrada |
+| `iPod-Video` | PP5022C | **Boots both firmwares of the real device**: Rockbox up to the menu, navigable; and Apple's retailOS drawing its interface, with navigable menus and submenus |
+| `iPod-Classic` | S5L8702 | **Boots Apple's retailOS and can be navigated**: RTXC kernel, ATA with DMA, `rsrc` volume mounted, typefaces, the language selection screen — 75 463 of 76 800 pixels — which the wheel moves, and from it **the main menu in the chosen language, with the right panel following the highlight, Enter going into Music and MENU returning to the same frame**. Missing: the guest drops one SELECT out of every three or four, with no cause found |
 
-Para una introducción de una página, empezar por el
-[README de la raíz](../README.md). Para compilarlo, ejecutarlo y probarlo:
+For a one-page introduction, start with the
+[root README](../README.md). To build it, run it and test it:
 [05-build-notes.md](05-build-notes.md).
 
-## Índice
+## Index
 
-### Cómo se averiguó todo — los dos documentos que más rinden
+### How everything was figured out — the two highest-yield documents
 
-| Documento | Contenido |
+| Document | Contents |
 |---|---|
-| [12-historia-6g.md](12-historia-6g.md) | **Cronología técnica del iPod classic 6G**: desde un firmware que era un bloque cifrado ilegible hasta una pantalla de idiomas navegable. Cada obstáculo con su síntoma, su causa y **cómo se encontró**; el catálogo de hipótesis retiradas; y el capítulo de **las tres veces que un descarte resultó ser la pista buena** — qué tienen en común y qué habría que haber hecho distinto. |
-| [13-classic6g-musica.md](13-classic6g-musica.md) | **Meterle música al 6G emulado**: por qué copiar el MP3 no basta, cómo se construye el `iTunesDB` con `libgpod`, y de dónde salen el modelo y el número de serie (del `SysCfg` de la NOR, con las etiquetas invertidas). Con el punto de riesgo dicho claro: el identificador FireWire está **inventado**, y si el firmware valida el hash contra el suyo, la lista saldrá vacía. |
-| [14-classic6g-audio.md](14-classic6g-audio.md) | **El camino de audio (que suene)**: el bloque I²S `0x3CA00000` modelado (readback + FIFO + captura a WAV), el códec CS42L55 por I²C `0x4A`, y el pacing del DMA al ritmo de muestreo (hito 2, demostrado). Con los dos muros medidos: **el retailOS decodifica en el DSP CalmADM2E** (no en el ARM), así que el PCM capturado es silencio; y **los botones no registran en la lista de canciones**, que es lo que impide llegar a Now Playing. El camino al audio real es Rockbox. |
-| [15-muros-classic6g.md](15-muros-classic6g.md) | **Los muros del Classic 6G, y cómo cayó cada uno**: síntesis de todo el puerto — cada obstáculo (firmware cifrado, pantalla negra, el compositor, las fuentes, la rueda, el montaje FAT, la firma del `iTunesDB`) con su síntoma, su causa y **cómo** se desbloqueó. Incluye el patrón repetido de "el descarte que era la pista" y los muros que siguen en pie. |
-| [17-classic6g-dsp-retailos.md](17-classic6g-dsp-retailos.md) | **El DSP de audio del retailOS (CalmADM2E), para emularlo después**: por qué el retailOS no suena (decodifica en un DSP, no en el ARM), el **mapa de registros del CalmADM2E** (buzón `DDATA`/`UDATA`/`COMMUN` + búferes secuenciales en DRAM, de Rockbox `s5l87xx.h`), la vía recomendada de **HLE** con el precedente del VideoCore del 5G, y los pasos concretos de RE que faltan. Punto de partida para "que el retailOS suene". **Su premisa la corrige [19](19-classic6g-dsp-hle.md).** |
-| [19-classic6g-dsp-hle.md](19-classic6g-dsp-hle.md) | **Especificación de HLE del audio del retailOS, e inventario de incógnitas**: síntesis de dos investigaciones de RE (desensamblado + traza) que **corrigen con medida** la premisa de [17](17-classic6g-dsp-retailos.md). VERIFICADO: el retailOS **no toca** `0x39000000`/`0x3F000000` en ningún estado alcanzable (el "recuento de referencias" era el float `0.5f` y datos); el HW conducido al reproducir es un **escalador de imagen** (`0x391/2/3`, la carátula), no audio; el decode real es **MeCCA/AudioCodecs en software**. El mapa de registros candidato, las 4 preguntas del protocolo respondidas por medida (con lo que quedó DESCONOCIDO), y un **plan de HLE en árbol de decisión** cuyo primer nodo barato decide dónde va el modelo antes de escribir una línea. |
-| [16-classic6g-rockbox.md](16-classic6g-rockbox.md) | **Arrancar Rockbox hasta su menú principal**: la vía directa `-kernel rockbox.bin`, los dos cuelgues del arranque sin bootloader (SP=0 en `memory_init`, TimerE parado que cuelga `udelay`) reproducidos como hand-off en `mc->reset`, y la ruta de píxeles por **DMA de 16 bits al LCD** que el modelo (hecho para el retailOS) rechazaba. Termina en el menú cabbiev2 navegable, con `navtest.sh` del retailOS intacto. Es el primer paso hacia el **audio real** (Rockbox decodifica el MP3 en el ARM). |
-| [09-historia-5g.md](09-historia-5g.md) | Lo mismo para el iPod Video 5G: cada obstáculo, su síntoma y su causa, **incluidas las hipótesis que resultaron falsas** y por qué se sostuvieron. Con el catálogo de errores retirados, las técnicas de depuración ordenadas por lo que rindieron, y las cuestiones abiertas. |
+| [12-history-6g.md](12-history-6g.md) | **Technical chronology of the iPod classic 6G**: from a firmware that was an unreadable encrypted blob to a navigable language screen. Every obstacle with its symptom, its cause and **how it was found**; the catalog of retracted hypotheses; and the chapter on **the three times a discarded lead turned out to be the right one** — what they have in common and what should have been done differently. |
+| [13-classic6g-music.md](13-classic6g-music.md) | **Putting music on the emulated 6G**: why copying the MP3 is not enough, how the `iTunesDB` is built with `libgpod`, and where the model and serial number come from (from the NOR's `SysCfg`, with the tags reversed). With the risk point stated plainly: the FireWire identifier is **made up**, and if the firmware validates the hash against its own, the list will come out empty. |
+| [14-classic6g-audio.md](14-classic6g-audio.md) | **The audio path (getting it to play)**: the I²S block `0x3CA00000` modeled (readback + FIFO + capture to WAV), the CS42L55 codec over I²C `0x4A`, and DMA pacing at the sample rate (milestone 2, demonstrated). With the two walls measured: **the retailOS decodes on the CalmADM2E DSP** (not on the ARM), so the captured PCM is silence; and **the buttons do not register in the song list**, which is what prevents reaching Now Playing. The path to real audio is Rockbox. |
+| [15-classic6g-walls.md](15-classic6g-walls.md) | **The Classic 6G's walls, and how each one fell**: a synthesis of the whole port — each obstacle (encrypted firmware, black screen, the compositor, the fonts, the wheel, the FAT mount, the `iTunesDB` signature) with its symptom, its cause and **how** it was unblocked. Includes the repeated pattern of "the discarded lead that was the clue" and the walls still standing. |
+| [17-classic6g-dsp-retailos.md](17-classic6g-dsp-retailos.md) | **The retailOS audio DSP (CalmADM2E), to emulate it later**: why the retailOS does not play sound (it decodes on a DSP, not on the ARM), the **CalmADM2E register map** (`DDATA`/`UDATA`/`COMMUN` mailbox + sequential buffers in DRAM, from Rockbox's `s5l87xx.h`), the recommended **HLE** route with the 5G's VideoCore precedent, and the concrete RE steps still missing. Starting point for "getting the retailOS to play sound". **Its premise is corrected by [19](19-classic6g-dsp-hle.md).** |
+| [19-classic6g-dsp-hle.md](19-classic6g-dsp-hle.md) | **HLE specification of the retailOS audio, and inventory of unknowns**: a synthesis of two RE investigations (disassembly + trace) that **correct by measurement** the premise of [17](17-classic6g-dsp-retailos.md). VERIFIED: the retailOS **does not touch** `0x39000000`/`0x3F000000` in any reachable state (the "reference count" was the float `0.5f` and data); the HW driven during playback is an **image scaler** (`0x391/2/3`, the artwork), not audio; the real decode is **MeCCA/AudioCodecs in software**. The candidate register map, the 4 protocol questions answered by measurement (with what remained UNKNOWN), and a **decision-tree HLE plan** whose first cheap node decides where the model goes before writing a line. |
+| [16-classic6g-rockbox.md](16-classic6g-rockbox.md) | **Booting Rockbox to its main menu**: the direct `-kernel rockbox.bin` route, the two hangs of booting without a bootloader (SP=0 in `memory_init`, stopped TimerE that hangs `udelay`) reproduced as a hand-off in `mc->reset`, and the pixel path via **16-bit DMA to the LCD** that the model (built for the retailOS) rejected. It ends at the navigable cabbiev2 menu, with the retailOS's `navtest.sh` intact. It is the first step toward **real audio** (Rockbox decodes the MP3 on the ARM). |
+| [09-history-5g.md](09-history-5g.md) | The same for the iPod Video 5G: every obstacle, its symptom and its cause, **including the hypotheses that turned out to be false** and why they held up. With the catalog of retracted errors, the debugging techniques ordered by how much they yielded, and the open questions. |
 
-### El iPod classic 6G (S5L8702)
+### The iPod classic 6G (S5L8702)
 
-| Documento | Contenido |
+| Document | Contents |
 |---|---|
-| [10-classic6g-emcore.md](10-classic6g-emcore.md) | **El aparato real por USB**: el protocolo de emCORE r859 (y por qué los clientes oficiales no funcionan), **el descifrado del `osos` con la clave GID del propio SoC** — el bloqueo fundacional, resuelto —, el volcado de la NOR con su bloque `SCfg`, la prueba de que **la bootrom está bloqueada** y no se puede volcar por esta vía, y la dirección que cuelga el monitor. |
-| [11-classic6g-retailos.md](11-classic6g-retailos.md) | **El retailOS corriendo**, 17 secciones: las dos regiones de enlace de la imagen, el bloque sin nombre de `0x3C100000`, el panel y el puente ATA, el ciclo de caída sin disco y su causa, **el compositor de `0x38900000` y de dónde salen los píxeles** (§13), **por qué el arranque con disco estaba parado: DMAC0, no el ATA** (§14), **la rueda de clic y la pantalla que se puede mover** (§17), y tres auditorías independientes. |
-| [01-firmware-ipsw.md](01-firmware-ipsw.md) | Formato del `.ipsw`, la partición de firmware `]ih[` y la cabecera de imagen `8702`. Incluye la corrección que costó días: **`rsrc` no está vacío, es un FAT16 con las tipografías** que la interfaz necesita. |
-| [02-s5l8702-hardware.md](02-s5l8702-hardware.md) | **Referencia del S5L8702**: mapa de memoria, periféricos, números de IRQ y componentes de placa, **con lo que está modelado en este árbol y lo que no**. Corregido en `e17924eab`: la primera versión coló bases que sólo existen en S5L8700/8701. |
-| [08-s5l8702-fuentes-externas.md](08-s5l8702-fuentes-externas.md) | Correcciones al mapa de memoria, bootrom, cadena de arranque, click wheel, y el **modelo QEMU del S5L8702 que ya existe** en `freemyipod/qemu`. |
-| [03-reuse-qemu-ios.md](03-reuse-qemu-ios.md) | Documento de **planificación, histórico**: qué modelos de la rama `ipod_touch_2g` se pensaba reaprovechar. Lleva un banner con lo que de verdad se reutilizó. |
+| [10-classic6g-emcore.md](10-classic6g-emcore.md) | **The real device over USB**: the emCORE r859 protocol (and why the official clients do not work), **the decryption of the `osos` with the SoC's own GID key** — the foundational blocker, solved —, the dump of the NOR with its `SCfg` block, the proof that **the bootrom is locked** and cannot be dumped this way, and the address that hangs the monitor. |
+| [11-classic6g-retailos.md](11-classic6g-retailos.md) | **The retailOS running**, 17 sections: the image's two link regions, the unnamed block at `0x3C100000`, the panel and the ATA bridge, the no-disk crash cycle and its cause, **the compositor at `0x38900000` and where the pixels come from** (§13), **why the boot with a disk was stalled: DMAC0, not the ATA** (§14), **the click wheel and the screen that can be moved** (§17), and three independent audits. |
+| [01-firmware-ipsw.md](01-firmware-ipsw.md) | Format of the `.ipsw`, the `]ih[` firmware partition and the `8702` image header. Includes the correction that cost days: **`rsrc` is not empty, it is a FAT16 with the typefaces** the interface needs. |
+| [02-s5l8702-hardware.md](02-s5l8702-hardware.md) | **S5L8702 reference**: memory map, peripherals, IRQ numbers and board components, **with what is modeled in this tree and what is not**. Corrected in `e17924eab`: the first version let in bases that only exist on S5L8700/8701. |
+| [08-s5l8702-external-sources.md](08-s5l8702-external-sources.md) | Corrections to the memory map, bootrom, boot chain, click wheel, and the **QEMU model of the S5L8702 that already exists** in `freemyipod/qemu`. |
+| [03-reuse-qemu-ios.md](03-reuse-qemu-ios.md) | **Planning document, historical**: which models from the `ipod_touch_2g` branch were meant to be reused. It carries a banner with what was actually reused. |
 
-### El iPod Video 5G (PP502x)
+### The iPod Video 5G (PP502x)
 
-| Documento | Contenido |
+| Document | Contents |
 |---|---|
-| [06-ipod-video-5g.md](06-ipod-video-5g.md) | **El aparato real**: identificación (y el conflicto de fuentes sobre qué chip lleva), layout del disco, su firmware **sin cifrar**, el arranque dual, y cómo volcar la flash ROM desde el propio Rockbox. |
-| [07-pp502x-hardware.md](07-pp502x-hardware.md) | **Referencia del PP5020/PP5022**: mapa de memoria con qué está modelado y qué no, los alias del bit 26 y del bit 31, IRQs, los registros que tienen comportamiento, el IDE con su DMA, el I²C y el PCF50605, los dos bloques de DMA, el Broadcom BCM2722 y la interfaz de host del VideoCore, el click wheel y el modelo de arranque. Termina con **los supuestos del modelo que no son datos**. |
+| [06-ipod-video-5g.md](06-ipod-video-5g.md) | **The real device**: identification (and the source conflict over which chip it carries), disk layout, its **unencrypted** firmware, the dual boot, and how to dump the flash ROM from Rockbox itself. |
+| [07-pp502x-hardware.md](07-pp502x-hardware.md) | **PP5020/PP5022 reference**: memory map with what is modeled and what is not, the bit 26 and bit 31 aliases, IRQs, the registers that have behavior, the IDE with its DMA, the I²C and the PCF50605, the two DMA blocks, the Broadcom BCM2722 and the VideoCore host interface, the click wheel and the boot model. It ends with **the model's assumptions that are not data**. |
 
-### Transversal
+### Cross-cutting
 
-| Documento | Contenido |
+| Document | Contents |
 |---|---|
-| [04-roadmap.md](04-roadmap.md) | Estado por hitos y el recorrido de cada bloqueo que hubo que quitar. El documento más largo y el más cercano a un diario. |
-| [05-build-notes.md](05-build-notes.md) | Cómo compilar (WSL), **cómo ejecutarlo y probarlo**, teclas del click wheel, las propiedades de máquina que no salen en `-M help`, tres trampas del entorno (CRLF, symlinks de git, `--disable-werror`) y cómo averiguar dónde se ha quedado el firmware. |
-| [18-entorno-herramientas.md](18-entorno-herramientas.md) | **Qué instalar y descargar para reproducir todo el proyecto**: la lista completa agrupada por para qué sirve — WSL2+WSLg y usbipd (Windows), las dependencias de QEMU, el toolchain ARM y `gdb-multiarch` (RE), `dosfstools`/`mtools`/`libgpod` (discos y música), `ffmpeg`/`numpy` (verificar el audio), `pyusb`/`libusb` (el aparato por emCORE), y los repos descargados (Rockbox, freemyipod, giek). Con el `apt install` de todo junto. |
+| [04-roadmap.md](04-roadmap.md) | Status by milestone and the course of each blocker that had to be removed. The longest document and the closest to a diary. |
+| [05-build-notes.md](05-build-notes.md) | How to build (WSL), **how to run it and test it**, click wheel keys, the machine properties that do not show up in `-M help`, three environment traps (CRLF, git symlinks, `--disable-werror`) and how to find out where the firmware has stopped. |
+| [18-environment-tools.md](18-environment-tools.md) | **What to install and download to reproduce the whole project**: the complete list grouped by what it is for — WSL2+WSLg and usbipd (Windows), the QEMU dependencies, the ARM toolchain and `gdb-multiarch` (RE), `dosfstools`/`mtools`/`libgpod` (disks and music), `ffmpeg`/`numpy` (verifying the audio), `pyusb`/`libusb` (the device via emCORE), and the downloaded repos (Rockbox, freemyipod, giek). With the `apt install` of everything together. |
 
-## Fuentes
+## Sources
 
-- **Rockbox** — port completo y funcional a los dos aparatos, con drivers open
-  source a nivel de registro. Es la fuente primaria del mapa de memoria.
-  - Para el PP502x: `firmware/target/arm/ipod/`, `firmware/export/pp5020.h`,
+- **Rockbox** — complete, working port to both devices, with open source
+  register-level drivers. It is the primary source for the memory map.
+  - For the PP502x: `firmware/target/arm/ipod/`, `firmware/export/pp5020.h`,
     `bootloader/ipod.c`.
-  - Para el S5L8702: `firmware/export/s5l87xx.h` (2052 líneas, ~1400 defines),
+  - For the S5L8702: `firmware/export/s5l87xx.h` (2052 lines, ~1400 defines),
     `firmware/target/arm/s5l8702/`, `bootloader/ipod-s5l87xx.c`.
-  - Copia local en `assets/ref/` y `assets/rockbox/`.
-  - **Aviso de método**: lo que un driver de Rockbox *nombra pero no usa* es
-    justo donde el modelo tiene un agujero invisible. Ver `HI_IRQ` en
-    [09-historia-5g.md](09-historia-5g.md).
-- **iPodLinux** — `ipodloader2/ipodhw.c`, de donde sale el bloque SysInfo que
-  la ROM de arranque deja en lo alto de la IRAM.
-- **ipodpatcher** — el modelo de arranque dual y la tabla `getmodel()`.
-- **freemyipod.org** — wiki de ingeniería inversa de los iPod no-iOS,
-  [Classic_6G](https://freemyipod.org/wiki/Classic_6G); **emCORE**, que es lo
-  que hace descifrable el firmware del Classic; y `freemyipod/qemu` rama
-  `s5l8702-dev`, un modelo QEMU del mismo SoC.
-- **devos50/qemu-ios** — el emulador base, ramas `ipod_touch_1g` (S5L8900) y
-  `ipod_touch_2g` (S5L8720).
-- **Blogs de Martijn de Vos** — [Touch 1G](https://devos50.github.io/blog/2022/ipod-touch-qemu/),
+  - Local copy in `assets/ref/` and `assets/rockbox/`.
+  - **Method warning**: what a Rockbox driver *names but does not use* is
+    exactly where the model has an invisible hole. See `HI_IRQ` in
+    [09-history-5g.md](09-history-5g.md).
+- **iPodLinux** — `ipodloader2/ipodhw.c`, where the SysInfo block that the
+  boot ROM leaves at the top of IRAM comes from.
+- **ipodpatcher** — the dual boot model and the `getmodel()` table.
+- **freemyipod.org** — reverse-engineering wiki for non-iOS iPods,
+  [Classic_6G](https://freemyipod.org/wiki/Classic_6G); **emCORE**, which is
+  what makes the Classic's firmware decryptable; and `freemyipod/qemu` branch
+  `s5l8702-dev`, a QEMU model of the same SoC.
+- **devos50/qemu-ios** — the base emulator, branches `ipod_touch_1g` (S5L8900)
+  and `ipod_touch_2g` (S5L8720).
+- **Martijn de Vos's blogs** — [Touch 1G](https://devos50.github.io/blog/2022/ipod-touch-qemu/),
   [Touch 2G](https://devos50.github.io/blog/2023/ipod-touch-2g-qemu/).
 
-## Dónde está cada cosa
+## Where everything is
 
 ```
-hw/arm/ipod_video/              modelos del PP502x — 8 ficheros
-include/hw/arm/ipod_video/      sus cabeceras — 7 ficheros
-tools/ipod_video/               herramientas del 5G
+hw/arm/ipod_video/              PP502x models — 8 files
+include/hw/arm/ipod_video/      their headers — 7 files
+tools/ipod_video/               5G tools
 
-hw/arm/ipod_classic/            modelos del S5L8702 — 10 ficheros
-include/hw/arm/ipod_classic/    sus cabeceras — 10 ficheros
-tools/ipod_classic/             herramientas del Classic
+hw/arm/ipod_classic/            S5L8702 models — 10 files
+include/hw/arm/ipod_classic/    their headers — 10 files
+tools/ipod_classic/             Classic tools
 
-wiki/                           esta documentación
-assets/                         GITIGNORADO — firmware, imágenes extraídas,
-                                capturas, fuentes de referencia de Rockbox
+wiki/                           this documentation
+assets/                         GITIGNORED — firmware, extracted images,
+                                screenshots, Rockbox reference sources
 ```
 
-`assets/` está fuera de git a propósito: es material que no es nuestro para
-redistribuir. Sin un volcado propio de un iPod no hay nada que arrancar.
-Contiene, entre otras cosas:
+`assets/` is outside git on purpose: it is material that is not ours to
+redistribute. Without your own dump of an iPod there is nothing to boot. It
+contains, among other things:
 
-| Ruta | Qué es |
+| Path | What it is |
 |---|---|
-| `assets/classic6g/osos_decrypted.bin` | **el retailOS del Classic 6G en claro**, descifrado por el propio aparato. Es lo que arranca `-M iPod-Classic` |
-| `assets/classic6g/bootflash_nor_1MB.bin` | volcado de la NOR SPI del Classic, con su bloque `SCfg` (de donde sale el `HwVr` = 19) |
-| `assets/classic6g/aupd_decrypted.bin`, `rsrc_fat16.img` | el updater descifrado y el volumen de recursos |
-| `assets/iPod_24.1.1.2.ipsw`, `assets/extracted/`, `assets/images/` | el firmware del Classic 6G, desempaquetado y extraído |
-| `assets/ipod-video-fw.bin` | volcado de la partición de firmware del 5G, **con el MBR delante** (82 252 800 B) |
-| `assets/ipod-video-fwpart.bin` | el mismo **sin** los 63 sectores de cabecera — es el que quiere `fwtool.py` |
-| `assets/ipod-video-disk.img` | imagen de disco construida con `mkdisk.sh` (MBR + firmware + FAT32) |
+| `assets/classic6g/osos_decrypted.bin` | **the Classic 6G's retailOS in the clear**, decrypted by the device itself. It is what `-M iPod-Classic` boots |
+| `assets/classic6g/bootflash_nor_1MB.bin` | dump of the Classic's SPI NOR, with its `SCfg` block (where `HwVr` = 19 comes from) |
+| `assets/classic6g/aupd_decrypted.bin`, `rsrc_fat16.img` | the decrypted updater and the resource volume |
+| `assets/iPod_24.1.1.2.ipsw`, `assets/extracted/`, `assets/images/` | the Classic 6G firmware, unpacked and extracted |
+| `assets/ipod-video-fw.bin` | dump of the 5G's firmware partition, **with the MBR in front** (82 252 800 B) |
+| `assets/ipod-video-fwpart.bin` | the same **without** the 63 header sectors — it is the one `fwtool.py` wants |
+| `assets/ipod-video-disk.img` | disk image built with `mkdisk.sh` (MBR + firmware + FAT32) |
 | `assets/images-5g/` | `osos_full.bin`, `apple_retailos.bin`, `rockbox_bootloader.bin`, `rockbox_app.bin`, `vmcs.bin` |
-| `assets/apple/`, `assets/nav-baseline/`, `assets/nav*/` | capturas de referencia de los dos aparatos |
-| `assets/ref/`, `assets/rockbox/` | fuentes de Rockbox para S5L8702 e ipod6g |
+| `assets/apple/`, `assets/nav-baseline/`, `assets/nav*/` | reference screenshots of both devices |
+| `assets/ref/`, `assets/rockbox/` | Rockbox sources for S5L8702 and ipod6g |
 
-## Herramientas propias
+## Our own tools
 
-### `tools/ipod_classic/` — el Classic
+### `tools/ipod_classic/` — the Classic
 
-| Herramienta | Qué hace |
+| Tool | What it does |
 |---|---|
-| `emcore_s5l8702.py` | Habla el protocolo de emCORE r859 con el iPod físico por USB: `info`, `hexdump`, `dump`, `norread` y **`decrypt`**, que es la que saca el `osos` en claro con la clave GID del SoC |
-| `fwtool.py` | Parsea y extrae las imágenes de un contenedor `]ih[`. **Se usa también para el 5G** |
-| `mkdisk6g4k.py` | **Fabrica el disco arrancable** a partir del `Firmware-XX` del `.ipsw` + una FAT32 vacía, con el MBR escrito **en unidades de 4096 bytes**, que es el bloque de dispositivo de un iPod Classic. `mkdisk6g.py` es la variante en sectores de 512, de la investigación del layout |
-| `mkfwpart6g.py` | Re-maqueta una partición de firmware para otro tamaño de bloque |
-| `navtest.sh` | **La prueba de navegación**: arranca, espera, comprueba que la pantalla está quieta, pulsa, captura y **decide**. Suspende si el suelo de ruido deja de ser 0 |
-| `audit_run.sh`, `audit_peek.sh` | Arrancan, esperan, capturan y resumen stderr; el segundo lee memoria física por el monitor |
-| `gdbpoke.py`, `gdbrun.sh`, `gdbtrace.py` | Cliente del protocolo remoto de GDB: breakpoints, registros, memoria y `--skip` para saltarse una llamada **sin tocar la imagen del huésped**. `gdbrun.sh` arranca QEMU con `-S -gdb` y lo conduce |
-| `pixcount.py`, `ppm2png.py` | Cuentan píxeles no negros de un `screendump` y lo convierten a PNG **para mirarlo**. `ppm2png.py --raw 320x240:argb8888` también lee framebuffers crudos sacados con `pmemsave` |
-| `findlit.py` | Dónde está un literal de 32 bits en la imagen, en VA, y qué `ldr rX,[pc,#imm]` lo cargan. Sin falsos positivos |
-| `lcdtest.S` | **Caso de control del panel**: dibuja una rampa de 320×240 que da 76 800 píxeles y 1920 colores exactos |
-| `osana.py` | Ayudas de análisis del `osos_decrypted.bin`, con la base `0x07FF51B8` de la carga dispersa ya aplicada |
-| `norboot_im3.py` | Identifica y descifra la imagen IM3 del offset `0x8000` de la NOR |
-| `mktestbin.py` | Genera binarios ARM de prueba |
-| `ranaddr.sh` | «¿corrió esta función?» — `-d in_asm` + grep, **sólo válido para entradas de bloque**, y el propio script lo avisa |
-| `atatrace.sh` | Arranca con un disco y captura cada acceso a registro del ATA más lo que el firmware diga por semihosting |
-| `mk6g_*.sh` | Herramientas de usar y tirar de la investigación del layout de disco |
-| `tests/` | Tests bare-metal (timers, ruta de interrupción) |
+| `emcore_s5l8702.py` | Speaks the emCORE r859 protocol with the physical iPod over USB: `info`, `hexdump`, `dump`, `norread` and **`decrypt`**, which is the one that gets the `osos` out in the clear with the SoC's GID key |
+| `fwtool.py` | Parses and extracts the images of a `]ih[` container. **Also used for the 5G** |
+| `mkdisk6g4k.py` | **Builds the bootable disk** from the `.ipsw`'s `Firmware-XX` + an empty FAT32, with the MBR written **in 4096-byte units**, which is the device block size of an iPod Classic. `mkdisk6g.py` is the 512-byte-sector variant, from the layout investigation |
+| `mkfwpart6g.py` | Repackages a firmware partition for another block size |
+| `navtest.sh` | **The navigation test**: boots, waits, checks that the screen is still, presses, captures and **decides**. Fails if the noise floor stops being 0 |
+| `audit_run.sh`, `audit_peek.sh` | Boot, wait, capture and summarize stderr; the second reads physical memory through the monitor |
+| `gdbpoke.py`, `gdbrun.sh`, `gdbtrace.py` | GDB remote protocol client: breakpoints, registers, memory and `--skip` to skip a call **without touching the guest image**. `gdbrun.sh` starts QEMU with `-S -gdb` and drives it |
+| `pixcount.py`, `ppm2png.py` | Count non-black pixels of a `screendump` and convert it to PNG **to look at it**. `ppm2png.py --raw 320x240:argb8888` also reads raw framebuffers taken with `pmemsave` |
+| `findlit.py` | Where a 32-bit literal is in the image, as a VA, and which `ldr rX,[pc,#imm]` load it. No false positives |
+| `lcdtest.S` | **Panel control case**: draws a 320×240 ramp that gives exactly 76 800 pixels and 1920 colors |
+| `osana.py` | Analysis helpers for `osos_decrypted.bin`, with the scatter-load base `0x07FF51B8` already applied |
+| `norboot_im3.py` | Identifies and decrypts the IM3 image at offset `0x8000` of the NOR |
+| `mktestbin.py` | Generates test ARM binaries |
+| `ranaddr.sh` | "did this function run?" — `-d in_asm` + grep, **only valid for block entries**, and the script itself warns about it |
+| `atatrace.sh` | Boots with a disk and captures every ATA register access plus whatever the firmware says via semihosting |
+| `mk6g_*.sh` | Throwaway tools from the disk layout investigation |
+| `tests/` | Bare-metal tests (timers, interrupt path) |
 
-### `tools/ipod_video/` — el 5G
+### `tools/ipod_video/` — the 5G
 
-| Herramienta | Qué hace |
+| Tool | What it does |
 |---|---|
-| `dump-firmware.ps1` | Vuelca la partición de firmware de un iPod conectado. **Windows, como administrador.** Abre el disco en solo lectura y se niega si hay más de un candidato o si es el disco de sistema |
-| `mkdisk.sh` | Construye una imagen de disco arrancable: MBR + firmware + una FAT32 con `.rockbox`. Necesita `dosfstools` y `mtools` |
-| `navtest.sh` | Prueba de navegación de **Rockbox** (regresión contra `assets/nav-baseline`) |
-| `appletest.sh` | Prueba de navegación del **retailOS de Apple** |
-| `run.sh` | Lanzador (`run.sh rockbox\|apple`). Pensado para trazar registros: **no engancha disco** |
-| `extract-vc.py` | Saca `vmcs.bin` y el resto del FAT16 incrustado en la partición de firmware |
-| `findlit.py` | Igual que el del Classic. Nació de un error de método: buscar bytes crudos daba 139 falsos positivos donde había 1 verdadero |
+| `dump-firmware.ps1` | Dumps the firmware partition of a connected iPod. **Windows, as administrator.** Opens the disk read-only and refuses if there is more than one candidate or if it is the system disk |
+| `mkdisk.sh` | Builds a bootable disk image: MBR + firmware + a FAT32 with `.rockbox`. Needs `dosfstools` and `mtools` |
+| `navtest.sh` | **Rockbox** navigation test (regression against `assets/nav-baseline`) |
+| `appletest.sh` | Navigation test of **Apple's retailOS** |
+| `run.sh` | Launcher (`run.sh rockbox\|apple`). Meant for tracing registers: **does not attach a disk** |
+| `extract-vc.py` | Extracts `vmcs.bin` and the rest of the FAT16 embedded in the firmware partition |
+| `findlit.py` | Same as the Classic's. It was born from a method error: searching raw bytes gave 139 false positives where there was 1 true one |
 
-> `tools/ipod_video/navtest.sh` y `appletest.sh` **no son aserciones**: salen con
-> código 0 aunque QEMU muera al arrancar. Hay que mirar las cifras.
-> `tools/ipod_classic/navtest.sh` **sí** decide, y suspende.
+> `tools/ipod_video/navtest.sh` and `appletest.sh` **are not assertions**: they
+> exit with code 0 even if QEMU dies at boot. You have to look at the figures.
+> `tools/ipod_classic/navtest.sh` **does** decide, and fails.

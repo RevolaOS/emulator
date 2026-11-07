@@ -1,57 +1,57 @@
-# Continuar el trabajo en otra PC
+# Continuing the work on another PC
 
-Guía para retomar el emulador de iPod Classic 6G (con el reproductor Now Playing
-HLE) en una máquina nueva. Estado del trabajo: `wiki/19-classic6g-dsp-hle.md`
-sección **§11.23 "DÓNDE ESTAMOS"**.
+Guide for resuming the iPod Classic 6G emulator (with the HLE Now Playing
+player) on a new machine. Work status: `wiki/19-classic6g-dsp-hle.md`
+section **§11.23 "WHERE WE ARE"**.
 
-## 1. Clonar
+## 1. Clone
 
 ```bash
 git clone https://github.com/SoftwareEscarlata/qemu-ios.git
 cd qemu-ios
-git checkout dsp-deadlock-break   # la rama con todo el trabajo
+git checkout dsp-deadlock-break   # the branch with all the work
 ```
 
-## 2. Entorno (WSL Ubuntu 24.04 recomendado, o Linux nativo)
+## 2. Environment (WSL Ubuntu 24.04 recommended, or native Linux)
 
-Dependencias de build y de las herramientas de sesión:
+Build dependencies and dependencies of the session tools:
 
 ```bash
 sudo apt update
 sudo apt install -y build-essential ninja-build meson pkg-config python3 \
   libglib2.0-dev libpixman-1-dev libsdl2-dev libpulse-dev zlib1g-dev \
   ffmpeg gdb-multiarch
-# ffmpeg y ffprobe son necesarios para el HLE de audio (decode host-side + tags).
-# gdb-multiarch para las sondas de tools/session-dbg/.
+# ffmpeg and ffprobe are required for the audio HLE (host-side decode + tags).
+# gdb-multiarch for the probes in tools/session-dbg/.
 ```
 
-## 3. Compilar
+## 3. Build
 
 ```bash
-./configure --target-list=arm-softmmu --enable-sdl --enable-plugins   # o el meson setup del repo
+./configure --target-list=arm-softmmu --enable-sdl --enable-plugins   # or the repo's meson setup
 ninja -C build qemu-system-arm
-# el plugin de traza:  ninja -C build contrib/plugins/libpctrace.so
+# the trace plugin:  ninja -C build contrib/plugins/libpctrace.so
 ```
 
-## 4. Assets binarios (NO están en git — ver la Release)
+## 4. Binary assets (NOT in git — see the Release)
 
-Los binarios (firmware de Apple + imágenes de disco) son grandes y con derechos,
-así que van en una **GitHub Release** del repo, no en el árbol git
-(`/assets/` está en `.gitignore`). Descárgalos de la Release y colócalos:
+The binaries (Apple firmware + disk images) are large and copyrighted,
+so they go in a **GitHub Release** of the repo, not in the git tree
+(`/assets/` is in `.gitignore`). Download them from the Release and place them:
 
-| Fichero | Colócalo en | Para qué |
+| File | Place it in | Purpose |
 |---|---|---|
-| `osos_decrypted.bin` | `assets/classic6g/` | kernel del retailOS (`-kernel`) |
-| `rsrc_fat16.img`, `aupd_decrypted.bin`, `bootflash_nor_1MB.bin` | `assets/classic6g/` | recursos / boot del 6G |
-| `Emulti.img` | `~/6g/` (o donde prefieras) | disco con música (una canción; para probar el reproductor) |
-| `osos.dis`, `iram.dis` | `~/6g/` | desensamblado (VA = off + 0x07FF51B8) que usan las sondas de `tools/session-dbg/` |
+| `osos_decrypted.bin` | `assets/classic6g/` | retailOS kernel (`-kernel`) |
+| `rsrc_fat16.img`, `aupd_decrypted.bin`, `bootflash_nor_1MB.bin` | `assets/classic6g/` | 6G resources / boot |
+| `Emulti.img` | `~/6g/` (or wherever you prefer) | disk with music (one song; for testing the player) |
+| `osos.dis`, `iram.dis` | `~/6g/` | disassembly (VA = off + 0x07FF51B8) used by the probes in `tools/session-dbg/` |
 
-Ajusta las rutas `HLE_AUDIO_DISK` / `-drive` a donde pongas `Emulti.img`.
+Adjust the `HLE_AUDIO_DISK` / `-drive` paths to wherever you put `Emulti.img`.
 
-## 5. Lanzar el reproductor Now Playing (HLE)
+## 5. Launch the Now Playing player (HLE)
 
 ```bash
-export DISPLAY=:0                       # WSLg / X para la ventana
+export DISPLAY=:0                       # WSLg / X for the window
 HLE_AUDIO_DATAPATH=1 HLE_AUDIO_DISK=$HOME/6g/Emulti.img HLE_AUDIO_SUSTAIN=1 \
 AUDIOPACE=1 AUDIOLIVE=1 HLE_NP_OVERLAY=1 \
   build/qemu-system-arm -M iPod-Classic \
@@ -60,30 +60,30 @@ AUDIOPACE=1 AUDIOLIVE=1 HLE_NP_OVERLAY=1 \
   -audio pa -monitor telnet:127.0.0.1:4455,server,nowait -L build/pc-bios
 ```
 
-Navega con la rueda a **Music → una canción → SELECT**. Aparece el reproductor.
-Controles (teclado): `s`=play/pausa, `d`/`a`=siguiente/anterior, `]`/`[`=seek ±5s,
-`w`=ocultar/`Enter`=mostrar.
+Navigate with the wheel to **Music → a song → SELECT**. The player appears.
+Controls (keyboard): `s`=play/pause, `d`/`a`=next/previous, `]`/`[`=seek ±5s,
+`w`=hide/`Enter`=show.
 
-## 6. Herramientas de sesión
+## 6. Session tools
 
-En `tools/session-dbg/` están todos los scripts de investigación de esta sesión
-(runners `run_*.sh`, sondas gdb `*.gdb` / `*.py`, capturas). Referencian rutas
-absolutas de WSL (`/mnt/c/Desarrollo/qemu-ios`, `~/6g/...`) — ajústalas a la ruta
-de la nueva máquina antes de usarlas. Control remoto del guest:
-`tools/ipod_classic/iremote.py` (rueda vía monitor telnet).
+`tools/session-dbg/` contains all the investigation scripts from this session
+(runners `run_*.sh`, gdb probes `*.gdb` / `*.py`, captures). They reference absolute
+WSL paths (`/mnt/c/Desarrollo/qemu-ios`, `~/6g/...`) — adjust them to the path
+on the new machine before using them. Remote control of the guest:
+`tools/ipod_classic/iremote.py` (wheel via telnet monitor).
 
-## 7. Qué NO se subió (y por qué)
+## 7. What was NOT uploaded (and why)
 
-- Las ~15 GB de variantes de imagen de disco de `~/6g/` (experimentos): solo se
-  sube `Emulti.img` (la funcional). El resto se regenera o se pide aparte.
-- El resto de `assets/` (rockbox 615M, discos del 5G, ipsw, ref…): no necesarios
-  para el reproductor del 6G. Si los necesitas, pídelos.
+- The ~15 GB of disk image variants in `~/6g/` (experiments): only
+  `Emulti.img` (the working one) is uploaded. The rest is regenerated or requested separately.
+- The rest of `assets/` (rockbox 615M, 5G disks, ipsw, ref…): not needed
+  for the 6G player. If you need them, ask for them.
 
-## Estado actual (resumen)
+## Current status (summary)
 
-- **Logrado:** reproductor Now Playing **HLE** usable — audio REAL de la canción
-  del disco + pantalla dibujada por QEMU (overlay) + controles play/pausa/seek/
-  skip que manejan el audio. Ver `wiki/19` §11.23.
-- **No logrado (nativo):** la pantalla Now Playing ORIGINAL de Apple sigue
-  bloqueada por el deadlock estructural de MeCCA (§11.12-11.22). El arreglo del
-  redirect mantiene vivo al guest, pero su render nativo no produce.
+- **Achieved:** usable **HLE** Now Playing player — REAL audio of the song
+  from the disk + screen drawn by QEMU (overlay) + play/pause/seek/
+  skip controls that drive the audio. See `wiki/19` §11.23.
+- **Not achieved (native):** Apple's ORIGINAL Now Playing screen is still
+  blocked by the structural MeCCA deadlock (§11.12-11.22). The redirect
+  fix keeps the guest alive, but its native render produces nothing.

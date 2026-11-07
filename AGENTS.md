@@ -41,7 +41,7 @@ after each important input because Select/Menu presses can be dropped.
 
 The playback settings are emulator workarounds, not hardware acceptance. Report
 elapsed-time, pause/resume, track-change, seek and bookmark limitations honestly.
-See [the playback investigation](wiki/20-classic6g-reproductor.md) before changing
+See [the playback investigation](wiki/20-classic6g-player.md) before changing
 the configuration. Keep VM files out of git and never install firmware on hardware
 as part of an emulator test. This fork is public: never commit Apple firmware,
 decrypted firmware, disk images or device identity backups (NOR, SysInfo), and

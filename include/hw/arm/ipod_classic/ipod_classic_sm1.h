@@ -12,7 +12,7 @@
  * osos_decrypted.bin (base VA = file offset + 0x07FF51B8) and cross-checked in
  * runtime with the pctrace mem-watch; see wiki/19-classic6g-dsp-hle.md section
  * 11. Every offset below is VERIFIED present in the disassembly (an accessor
- * reads/writes it); the ROLE of each is marked VERIFIED / INFERIDO / UNKNOWN in
+ * reads/writes it); the ROLE of each is marked VERIFIED / INFERRED / UNKNOWN in
  * the .c handlers. This device models the handshake coherently (state derived
  * from the writes) so ANY bring-up path -- the codec bring-up 0x0808170c or the
  * start/resume 0x08017378 -- completes without spinning, rather than the old
@@ -48,7 +48,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicSM1State, IPOD_CLASSIC_SM1)
 
 /* Clock/engine status word. Getter 0x080a7638(idx0). The bring-up spins on
  * bit 2 ("clock running / locked") at 0x08081af8 (`tst r0,#4; beq`). VERIFIED
- * that bit 2 is the awaited bit; that it means "clock ready" is INFERIDO. */
+ * that bit 2 is the awaited bit; that it means "clock ready" is INFERRED. */
 /*
  * +0xa8c: the engine's interrupt enable. The firmware arms it with the bare
  * constant 4 from the leaf at 0x08017364 (ldr r1,=0x38500000 / mov r0,#4 /
@@ -88,7 +88,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicSM1State, IPOD_CLASSIC_SM1)
  * waiting. The handler tests bit 2; this one tests bit 12. The model answered
  * bit 2 alone, so this branch was never taken in any run.
  *
- * What bit 12 means on silicon is INFERIDO: it is reported by the same word as
+ * What bit 12 means on silicon is INFERRED: it is reported by the same word as
  * the frame-done bit and gates the per-frame work, so it is treated as part of
  * the same frame-done report.
  */
@@ -100,19 +100,19 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicSM1State, IPOD_CLASSIC_SM1)
 /* Run/start control + run-state readback, both at +0x400.
  * Write: 0x080ae97c writes 1 to start. Read: 0x080b6788 polls (val & 3) until
  * it reads 1 ("running"). This is the start/resume path 0x08017378. VERIFIED
- * the two accessors; "start"/"running" is INFERIDO (strong). */
+ * the two accessors; "start"/"running" is INFERRED (strong). */
 #define S5L8702_SM1_RUN         0x400
 #define S5L8702_SM1_RUN_MASK    0x3
 
-/* Status/flag, read by 0x080915a4 masked with bit 8. Role INFERIDO -> 0. */
+/* Status/flag, read by 0x080915a4 masked with bit 8. Role INFERRED -> 0. */
 #define S5L8702_SM1_FLAG404     0x404
 
 /* Codec-enable strobe written during the bring-up (0x080a7614 writes 1).
- * INFERIDO: marks the engine powered. */
+ * INFERRED: marks the engine powered. */
 #define S5L8702_SM1_CODEC_EN    0x824
 
 /* Control/command written 4 at the end of the codec bring-up (0x080a7680,
- * masked 0x7fff). INFERIDO: "configuration committed". */
+ * masked 0x7fff). INFERRED: "configuration committed". */
 #define S5L8702_SM1_COMMIT      0xc48
 
 /*
@@ -122,7 +122,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicSM1State, IPOD_CLASSIC_SM1)
  *   +0x10 (W, 0x080ba768 `str [r4,#16]`): state command. Values seen: 4
  *          (power-up), 8, 16 (run), 96.
  *   +0x14 (R, 0x080b8470 `ldr [r0,#20]; and #7`): state, polled until (&7)==7.
- * VERIFIED offsets/accessors; the command/state meanings are INFERIDO (strong).
+ * VERIFIED offsets/accessors; the command/state meanings are INFERRED (strong).
  * The bring-up 0x0808170c uses idx4 (base+0x100): writes 4 to +0x110, waits for
  * +0x114 to read 7, then writes 16.
  */
@@ -146,7 +146,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicSM1State, IPOD_CLASSIC_SM1)
  * the ring to write the next decoded block, and 0x080b3104 uses it to decide
  * whether a buffer region has been consumed. Left at zero (the old model), the
  * copy always targets offset 0 and playback never advances -- so no music ever
- * reaches the mixer. VERIFIED accessors; "playback position" is INFERIDO
+ * reaches the mixer. VERIFIED accessors; "playback position" is INFERRED
  * (strong). We advance it from the I2S transmit-sample count (the real amount of
  * audio clocked out). See ipod_classic_sm1.c.
  */

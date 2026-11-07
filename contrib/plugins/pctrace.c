@@ -1,7 +1,7 @@
 /*
  * pctrace.c -- non-invasive guest-PC tracer for the iPod-Classic 6G retailOS.
  *
- * Purpose (wiki/19-classic6g-dsp-hle.md, wiki/15-muros-classic6g.md muro 12):
+ * Purpose (wiki/19-classic6g-dsp-hle.md, wiki/15-classic6g-walls.md muro 12):
  * follow the audio-player start-up handler WITHOUT stopping the CPU. Attaching
  * gdb to trace the play handler desynchronises the click-wheel input latch
  * (the DOWN/UP packets get reordered while the CPU is halted at a breakpoint),

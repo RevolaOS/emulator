@@ -48,11 +48,11 @@ disk=${2:-$HOME/6g/Erb.img}
 bin=${3:-$root/assets/rockbox/build-full/rockbox.bin}
 [ -f "$bin" ] || bin="$root/assets/rockbox/build-rb/rockbox.bin"
 
-[ -x "$qemu" ] || { echo "no encuentro $qemu; compila primero" >&2; exit 1; }
-[ -f "$bin" ]  || { echo "no encuentro rockbox.bin ($bin); compila la app" >&2; exit 1; }
+[ -x "$qemu" ] || { echo "cannot find $qemu; build it first" >&2; exit 1; }
+[ -f "$bin" ]  || { echo "cannot find rockbox.bin ($bin); build the app" >&2; exit 1; }
 [ -f "$disk" ] || {
-    echo "no encuentro el disco $disk." >&2
-    echo "Se fabrica uno con /.rockbox asi (ver la cabecera de este script):" >&2
+    echo "cannot find the disk $disk." >&2
+    echo "Build one with /.rockbox like this (see this script's header):" >&2
     echo "  unzip rockbox.zip; mkfs.vfat -F32 rbfat.img; mcopy -s .rockbox ::;" >&2
     echo "  python3 tools/ipod_classic/mkdisk6g4k.py Erb.img fwzero.img rbfat.img" >&2
     exit 1
@@ -86,8 +86,8 @@ sleep 1
         >/dev/null 2>"$out/qemu.err" || true
 
 echo
-echo "=== la rueda ==="
-grep WHEELTRACE "$out/qemu.err" || echo "  (nada: WHEELTRACE no imprimio)"
+echo "=== the wheel ==="
+grep WHEELTRACE "$out/qemu.err" || echo "  (nothing: WHEELTRACE printed nothing)"
 echo
 
 python3 - "$out" <<'EOF'
@@ -140,7 +140,7 @@ def differ(a, b):
 
 shots = sorted(glob.glob(os.path.join(out, "*.ppm")))
 if not shots:
-    print("NO HAY CAPTURAS: Rockbox no llego a arrancar")
+    print("NO SCREENSHOTS: Rockbox never booted")
     raise SystemExit(1)
 
 frames, rows, lits = {}, {}, {}
@@ -151,7 +151,7 @@ for p in shots:
     frames[name] = d
     lits[name] = lit(d)
     rows[name] = gold_row(w, h, d)
-    print("%-14s %6d px encendidos   barra dorada en y=%3d (%d px)"
+    print("%-14s %6d px lit   gold bar at y=%3d (%d px)"
           % (name, lits[name], rows[name][0], rows[name][1]))
 
 print()
@@ -159,26 +159,26 @@ ok = True
 
 def check(cond, msg):
     global ok
-    print(("  OK   " if cond else "  FALLO") + "  " + msg)
+    print(("  OK   " if cond else "  FAIL ") + "  " + msg)
     ok = ok and cond
 
 # 1) the menu drew
 check(lits.get("0-menu", 0) > 2000,
-      "el menu principal se DIBUJO (%d px)" % lits.get("0-menu", 0))
+      "the main menu was DRAWN (%d px)" % lits.get("0-menu", 0))
 # 2) forward wheel moved the bar down, and it came back
 y0 = rows.get("0-menu", (-1, 0))[0]
 y1 = rows.get("1-wheel-fwd", (-1, 0))[0]
 y2 = rows.get("2-wheel-fwd2", (-1, 0))[0]
 y3 = rows.get("3-wheel-back", (-1, 0))[0]
-check(y1 > y0 and y2 > y1, "la rueda BAJO el resaltado (y %d->%d->%d)" % (y0, y1, y2))
-check(y3 < y2, "la rueda hacia atras SUBIO el resaltado (y %d->%d)" % (y2, y3))
+check(y1 > y0 and y2 > y1, "the wheel moved the highlight DOWN (y %d->%d->%d)" % (y0, y1, y2))
+check(y3 < y2, "the wheel backwards moved the highlight UP (y %d->%d)" % (y2, y3))
 # 3) SELECT changed the screen
 d = differ(frames["3-wheel-back"], frames["4-select"]) if "4-select" in frames else 0
-check(d > 3000, "SELECT cambio la pantalla (%d px distintos)" % d)
+check(d > 3000, "SELECT changed the screen (%d px differ)" % d)
 
 print()
-print("PNGs en %s" % out)
-print("VEREDICTO:", "OK -- Rockbox llega a su menu principal y navega"
-      if ok else "FALLO")
+print("PNGs in %s" % out)
+print("VERDICT:", "OK -- Rockbox reaches its main menu and navigates"
+      if ok else "FAIL")
 raise SystemExit(0 if ok else 2)
 EOF

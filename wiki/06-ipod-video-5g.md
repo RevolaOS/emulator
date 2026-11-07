@@ -1,108 +1,107 @@
-# iPod Video (5G/5.5G) — el aparato real
+# iPod Video (5G/5.5G) — the real device
 
-Hardware disponible físicamente, volcado el 2026-08-06. A diferencia del
-Classic 6G, **su firmware no está cifrado**, lo que lo convirtió en el camino
-realista hacia arrancar el sistema operativo original de Apple.
+Hardware physically available, dumped on 2026-08-06. Unlike the Classic 6G,
+**its firmware is not encrypted**, which made it the realistic path toward
+booting Apple's original operating system.
 
-> **Ya no es el único** (10 de agosto de 2026). El firmware del Classic 6G
-> también está cifrado y aun así arranca: no hizo falta descifrarlo aquí, sino
-> **pedírselo al propio aparato**, que tiene la clave GID en el silicio y su
-> motor AES accesible por USB bajo emCORE. Ver
-> [10-classic6g-emcore.md](10-classic6g-emcore.md) y
-> [12-historia-6g.md](12-historia-6g.md). La comparación de entropía de más
-> abajo sigue siendo correcta y sigue siendo la prueba de cinco segundos que hay
-> que hacer antes de planificar nada — sólo que la respuesta «esto está
-> cifrado» ya no cierra la puerta.
+> **It is no longer the only one** (August 10, 2026). The Classic 6G firmware
+> is also encrypted and boots anyway: there was no need to decrypt it here;
+> instead it was enough to **ask the device itself**, which has the GID key in
+> silicon and its AES engine reachable over USB under emCORE. See
+> [10-classic6g-emcore.md](10-classic6g-emcore.md) and
+> [12-history-6g.md](12-history-6g.md). The entropy comparison further below is
+> still correct and is still the five-second test to run before planning
+> anything — it's just that the answer "this is encrypted" no longer closes the
+> door.
 
-## Identificación
+## Identification
 
-Fuentes contradictorias, resueltas por orden de fiabilidad:
+Contradictory sources, resolved in order of reliability:
 
-| Dato | Valor | Fuente |
+| Item | Value | Source |
 |---|---|---|
-| Número de modelo | `MA146E` | menú *Ajustes → Acerca de* de Apple |
-| **Chip** | **PP5022C** | Rockbox, leído del registro de versión del propio SoC |
-| Revisión hardware | `0x000b0005` | Rockbox HW info |
-| Reloj | 81805 (~81,8 MHz) | Rockbox HW info |
-| RAM | 64 MB | `rockbox-info.txt` y HW info |
-| `vers` del `osos` | `0x0000b012` → `>>8` = **`0xb0`** | el propio firmware |
+| Model number | `MA146E` | Apple's *Settings → About* menu |
+| **Chip** | **PP5022C** | Rockbox, read from the SoC's own version register |
+| Hardware revision | `0x000b0005` | Rockbox HW info |
+| Clock | 81805 (~81.8 MHz) | Rockbox HW info |
+| RAM | 64 MB | `rockbox-info.txt` and HW info |
+| `vers` of the `osos` | `0x0000b012` → `>>8` = **`0xb0`** | the firmware itself |
 | USB | `VID_05AC` / `PID_1209` | Windows |
 
-`0xb0` es exactamente lo que la tabla `getmodel()` de `ipodpatcher` etiqueta
-como *"Video (aka 5th Generation)"*, target `ipodvideo`. Ese dato sale del
-firmware, así que es el que manda.
+`0xb0` is exactly what the `getmodel()` table in `ipodpatcher` labels as
+*"Video (aka 5th Generation)"*, target `ipodvideo`. That value comes from the
+firmware, so it is the one that counts.
 
-El número de modelo `MA146` aparece en las bases de datos como un 5G de 30 GB
-(que llevaría 32 MB de RAM y un PP5021C), lo cual **no cuadra** con los 64 MB y
-el PP5022C que reporta el silicio. El aparato está modificado: lleva un
-adaptador **iFlash** con una tarjeta de 8 GB en lugar del disco duro original
-(el modelo del disco se reporta como `iFlash-Platform iPod Ada`). Lo más
-probable es que se hayan mezclado piezas. **Para el emulador manda el silicio:
-PP5022C con 64 MB.**
+The model number `MA146` appears in databases as a 30 GB 5G (which would have
+32 MB of RAM and a PP5021C), which **does not match** the 64 MB and the PP5022C
+that the silicon reports. The device is modified: it has an **iFlash** adapter
+with an 8 GB card in place of the original hard drive (the disk model is
+reported as `iFlash-Platform iPod Ada`). Most likely parts have been mixed.
+**For the emulator, the silicon wins: PP5022C with 64 MB.**
 
-## Layout del disco
+## Disk layout
 
 ```
-Sector 0        cabecera con pinta de VBR de FAT (EB 58 90 "MSDOS5.0")
-                + tabla de particiones MBR valida en 0x1BE, firma 55AA
+Sector 0        header that looks like a FAT VBR (EB 58 90 "MSDOS5.0")
+                + valid MBR partition table at 0x1BE, signature 55AA
 
-Particion #0    tipo 0x00   LBA 63       160587 sectores   <- FIRMWARE
-Particion #1    tipo 0x0B   LBA 160650   15117429 sectores <- FAT32 "IPOD" (D:)
+Partition #0    type 0x00   LBA 63       160587 sectors    <- FIRMWARE
+Partition #1    type 0x0B   LBA 160650   15117429 sectors  <- FAT32 "IPOD" (D:)
 ```
 
-Windows **no muestra la partición de firmware** porque su tipo es `0x00`. Hay
-que leerla en crudo: empieza en `63 × 512 = 0x7E00` y ocupa `160587 × 512 =
-82.220.544` bytes.
+Windows **does not show the firmware partition** because its type is `0x00`.
+It has to be read raw: it starts at `63 × 512 = 0x7E00` and spans `160587 × 512
+= 82,220,544` bytes.
 
-`tools/ipod_video/dump-firmware.ps1` automatiza el volcado (requiere
-administrador; abre el disco en solo lectura, busca el disco por modelo y se
-niega si hay más de un candidato o si es el disco de sistema).
+`tools/ipod_video/dump-firmware.ps1` automates the dump (requires
+administrator; it opens the disk read-only, finds the disk by model, and refuses
+if there is more than one candidate or if it is the system disk).
 
-> **Trampa del propio script**, verificada el 2026-08-09: la comprobación final
-> que busca el magic `]ih[` en el offset `0x100` **falla siempre sobre su
-> propia salida**, y no es que el volcado esté mal. El volcado empieza en el
-> sector 0, que es el MBR, así que el `]ih[` está en `0x7e00 + 0x100 = 0x7f00`;
-> en `0x100` hay bytes del MBR. Por eso el script produce también
-> `ipod-video-fwpart.bin`, que es el volcado **sin** los 63 sectores de
-> cabecera — y es ese, no el completo, el que hay que darle a `fwtool.py`.
+> **A trap in the script itself**, verified on 2026-08-09: the final check that
+> looks for the `]ih[` magic at offset `0x100` **always fails on its own
+> output**, and it's not that the dump is bad. The dump starts at sector 0,
+> which is the MBR, so the `]ih[` is at `0x7e00 + 0x100 = 0x7f00`; at `0x100`
+> there are MBR bytes. That's why the script also produces
+> `ipod-video-fwpart.bin`, which is the dump **without** the 63 header sectors
+> — and it is that one, not the full one, that has to be given to `fwtool.py`.
 
-## Contenido de la partición de firmware
+## Contents of the firmware partition
 
-Mismo contenedor `]ih[` que el Classic 6G. Directorio en `0x4200`:
+Same `]ih[` container as the Classic 6G. Directory at `0x4200`:
 
-| # | tipo | offset | tamaño | addr | entry | vers |
+| # | type | offset | size | addr | entry | vers |
 |---|---|---|---|---|---|---|
-| 0 | `osos` | `0x004400` | `0x742514` (7,6 MB) | `0x10000000` | `0x735a00` | `0x0000b012` |
+| 0 | `osos` | `0x004400` | `0x742514` (7.6 MB) | `0x10000000` | `0x735a00` | `0x0000b012` |
 | 1 | `rsrc` | `0x746c00` | `0x500000` (5 MB) | `0x10000000` | — | `0x0000b012` |
 | 2 | `aupd` | `0xc46e00` | `0x106400` (1 MB) | `0x10000000` | — | `0x0000b012` |
 | 3 | `hibe` | `0xd4d600` | `0x2000800` (33 MB) | `0x10000000` | — | 0 |
 
-> **`addr = 0x10000000`** es la dirección de carga en el PP502x — el ancla del
-> mapa de memoria, igual que `0x08000000` lo era para el S5L8702.
+> **`addr = 0x10000000`** is the load address on the PP502x — the anchor of the
+> memory map, just as `0x08000000` was for the S5L8702.
 
-### Trampa: el offset del directorio miente
+### Trap: the directory offset lies
 
-La cabecera dice `dir_offset = 0x4000` en `+0x104`, pero el directorio real
-está en `0x4200`. Y en el `Firmware-XX` que sale de un `.ipsw` del Classic 6G,
-el mismo campo `0x4000` apunta a `0x5000`. El desplazamiento cambia según de
-dónde venga el contenedor.
+The header says `dir_offset = 0x4000` at `+0x104`, but the real directory is at
+`0x4200`. And in the `Firmware-XX` that comes out of a Classic 6G `.ipsw`, the
+same `0x4000` field points to `0x5000`. The displacement changes depending on
+where the container comes from.
 
-`fwtool.py` ya no se fía del campo: prueba los desplazamientos conocidos
-(`+0x1000`, `+0x200`, `+0`) y, si ninguno cuela, escanea buscando lo primero
-que parsee como entrada de directorio válida. Valida que ambos códigos de
-cuatro caracteres sean imprimibles y que el offset caiga dentro del fichero,
-que es lo que evita leer 81 entradas de basura.
+`fwtool.py` no longer trusts the field: it tries the known displacements
+(`+0x1000`, `+0x200`, `+0`) and, if none of them works, scans for the first
+thing that parses as a valid directory entry. It validates that both
+four-character codes are printable and that the offset falls inside the file,
+which is what prevents reading 81 garbage entries.
 
-## Sin cifrar — verificado
+## Unencrypted — verified
 
-| Medida | iPod Video | Classic 6G |
+| Measurement | iPod Video | Classic 6G |
 |---|---|---|
-| Entropía primeros 64K | 6,348 bits/byte | 7,937 |
-| Entropía en mitad | 5,228 | 7,997 |
-| Entropía al final | 5,650 | 7,998 |
-| Cadenas ASCII ≥6 | 21.016 | ~0 (ruido) |
+| Entropy, first 64K | 6.348 bits/byte | 7.937 |
+| Entropy, middle | 5.228 | 7.997 |
+| Entropy, end | 5.650 | 7.998 |
+| ASCII strings ≥6 | 21,016 | ~0 (noise) |
 
-Y las cadenas son inequívocas:
+And the strings are unambiguous:
 
 ```
 portalplayer
@@ -113,14 +112,14 @@ Copyright(c) 1999 - 2003 PortalPlayer, Inc.  All rights reserved.
 booting!  hotstuff  battislo  diskmode  diskscan  softupdt  retailOS
 ```
 
-`retailOS`, `diskmode`, `diskscan`, `softupdt` son los nombres de imagen del
-cargador de PortalPlayer. **El sistema operativo de Apple está ahí, legible.**
+`retailOS`, `diskmode`, `diskscan`, `softupdt` are the image names of the
+PortalPlayer loader. **Apple's operating system is right there, readable.**
 
-## Rockbox ya instalado
+## Rockbox already installed
 
-El iPod tiene arranque dual. `ipodpatcher` mete el bootloader de Rockbox dentro
-de la imagen `osos` y conserva el firmware de Apple detrás; al arrancar se
-elige uno u otro.
+The iPod dual-boots. `ipodpatcher` puts the Rockbox bootloader inside the
+`osos` image and keeps Apple's firmware behind it; at boot one or the other is
+chosen.
 
 `D:\.rockbox\rockbox-info.txt`:
 
@@ -133,37 +132,36 @@ Binary: rockbox.ipod   (765676 bytes)
 gcc: arm-elf-eabi-gcc (GCC) 4.9.4
 ```
 
-Eso nos da tres binarios conocidos y funcionando contra los que probar el
-emulador: el bootloader de Rockbox, `rockbox.ipod`, y el `retailOS` de Apple.
+That gives us three known, working binaries to test the emulator against: the
+Rockbox bootloader, `rockbox.ipod`, and Apple's `retailOS`.
 
-## Estado
+## Status
 
-Este aparato es el que arranca. Con su propio volcado del `osos` y una imagen
-de disco construida con `tools/ipod_video/mkdisk.sh`, el emulador arranca **los
-dos** firmwares:
+This device is the one that boots. With its own `osos` dump and a disk image
+built with `tools/ipod_video/mkdisk.sh`, the emulator boots **both** firmwares:
 
-- **Rockbox**, hasta el menú, navegable con la rueda.
-- **El retailOS de Apple**, que dibuja su interfaz y se navega: pantalla de
-  idioma → menú principal → submenú de *Videos* → atrás.
+- **Rockbox**, up to the menu, navigable with the wheel.
+- **Apple's retailOS**, which draws its interface and can be navigated:
+  language screen → main menu → *Videos* submenu → back.
 
-> Esta sección decía sólo *"llega hasta el menú de Rockbox"*. Se corrige: el
-> retailOS también arranca desde los commits `5b5af8966` y `662d0fb83`.
+> This section used to say only *"gets as far as the Rockbox menu"*. Corrected:
+> the retailOS also boots since commits `5b5af8966` and `662d0fb83`.
 
-Ver [04-roadmap.md](04-roadmap.md) para el recorrido,
-[07-pp502x-hardware.md](07-pp502x-hardware.md) para los registros y
-[09-historia-5g.md](09-historia-5g.md) para cómo se averiguó cada cosa.
+See [04-roadmap.md](04-roadmap.md) for the journey,
+[07-pp502x-hardware.md](07-pp502x-hardware.md) for the registers, and
+[09-history-5g.md](09-history-5g.md) for how each thing was figured out.
 
-Resuelto desde que se escribió esta página:
+Resolved since this page was written:
 
-- **Dónde acaba el bootloader de Rockbox y empieza el firmware de Apple dentro
-  del `osos`**: está en la tabla de 07, byte a byte. El retailOS ocupa
-  `0x000000`-`0x735a00` y el bootloader va detrás, en `entryOffset`.
-- **El mapa de registros del PP5022C**: en 07, con qué está modelado y qué no.
+- **Where the Rockbox bootloader ends and Apple's firmware begins inside the
+  `osos`**: it's in the table in 07, byte by byte. The retailOS occupies
+  `0x000000`-`0x735a00` and the bootloader comes after it, at `entryOffset`.
+- **The PP5022C register map**: in 07, with what is modeled and what isn't.
 
-## Volcar la flash ROM del aparato
+## Dumping the device's flash ROM
 
-No hace falta compilar nada: **Rockbox ya lo trae**. La entrada existe desde
-antes de la v3.0, así que cualquier build de `ipodvideo` sirve.
+No need to compile anything: **Rockbox already includes it**. The entry has
+existed since before v3.0, so any `ipodvideo` build will do.
 
 `apps/debug_menu.c`:
 
@@ -180,88 +178,87 @@ static bool dbg_save_roms(void)
 }
 ```
 
-Aplica a este aparato: `ipodvideo.h` define `CONFIG_STORAGE STORAGE_ATA`
-(no SD), `CONFIG_CPU PP5022` (o sea `CPU_PP`) y `FLASH_SIZE 0x100000`. El mod
-iFlash no lo rompe, porque `CONFIG_STORAGE` es una constante de compilación, no
-depende del medio físico.
+It applies to this device: `ipodvideo.h` defines `CONFIG_STORAGE STORAGE_ATA`
+(not SD), `CONFIG_CPU PP5022` (i.e. `CPU_PP`) and `FLASH_SIZE 0x100000`. The
+iFlash mod doesn't break it, because `CONFIG_STORAGE` is a compile-time
+constant; it doesn't depend on the physical medium.
 
-### Procedimiento
+### Procedure
 
-1. Expulsa el iPod del PC y arranca **Rockbox** (no el firmware de Apple).
+1. Eject the iPod from the PC and boot **Rockbox** (not Apple's firmware).
 2. MENU → **System** → **Debug (Keep Out!)**.
-3. El **primer** elemento de la lista es **`Dump ROM contents`**. Selecciónalo.
-4. **No avisa de nada**: ni confirmación, ni barra, ni splash. Espera un par de
-   segundos y sal con LEFT.
-5. Conecta el USB para que monte la FAT32.
-6. En la **raíz** aparece `internal_rom_000000-0FFFFF.bin`, de exactamente
-   **1.048.576 bytes**.
+3. The **first** item in the list is **`Dump ROM contents`**. Select it.
+4. **It gives no feedback at all**: no confirmation, no bar, no splash. Wait a
+   couple of seconds and exit with LEFT.
+5. Connect USB so it mounts the FAT32.
+6. In the **root**, `internal_rom_000000-0FFFFF.bin` appears, exactly
+   **1,048,576 bytes**.
 
-Avisos, todos verificados en el código: no comprueba el retorno de `write()`
-ni si queda espacio, y si `creat()` falla se calla y no pasa nada. Si el
-fichero no aparece, es por eso. Se escribe siempre con el mismo nombre en `/`,
-así que reejecutarlo sobrescribe.
+Caveats, all verified in the code: it doesn't check the return value of
+`write()` or whether there is space left, and if `creat()` fails it stays
+silent and nothing happens. If the file doesn't appear, that's why. It is
+always written with the same name in `/`, so re-running it overwrites.
 
-**Comprobación de que el volcado es bueno**: en el offset `0xFFE00` deben verse
-los bytes ASCII `hslf` (que es `flsh` en little-endian). Si está todo a ceros,
-ha fallado.
+**Check that the dump is good**: at offset `0xFFE00` you should see the ASCII
+bytes `hslf` (which is `flsh` in little-endian). If it's all zeros, it failed.
 
-### Formato de la ROM
+### ROM format
 
-Directorio en `0xFFE00` (los últimos 512 bytes del MB), entradas de `0x28`
-bytes, terminadas cuando el magic deja de ser `flsh`:
+Directory at `0xFFE00` (the last 512 bytes of the MB), entries of `0x28` bytes,
+terminated when the magic stops being `flsh`:
 
-| Offset | Campo |
+| Offset | Field |
 |---|---|
 | `+0x00` | magic `flsh` |
-| `+0x04` | id de imagen: `disk`, `diag`, `logo`, `scan`, **`vmcs`** |
-| `+0x0C` | offset dentro de la flash |
-| `+0x10` | longitud |
-| `+0x14` | dirección de carga |
-| `+0x1C` | checksum (suma simple de bytes) |
-| `+0x20` | versión; byte alto `0xb0` = iPod Video |
+| `+0x04` | image id: `disk`, `diag`, `logo`, `scan`, **`vmcs`** |
+| `+0x0C` | offset within the flash |
+| `+0x10` | length |
+| `+0x14` | load address |
+| `+0x1C` | checksum (simple byte sum) |
+| `+0x20` | version; high byte `0xb0` = iPod Video |
 
-Lo confirman dos fuentes independientes que coinciden: `flash_get_section()` en
-`firmware/target/arm/ipod/video/lcd-video.c` (que lee la ROM en vivo desde
-`0x20000000`) y `utils/ipod/flashsplit/flashsplit.c` (que trocea un volcado).
-`flashsplit` produce `diskmode`, `diagmode`, `logo`, `diskscan` y `vmcs`, y debe
-imprimir `ipod model: ipvd`.
+Two independent sources confirm it and agree: `flash_get_section()` in
+`firmware/target/arm/ipod/video/lcd-video.c` (which reads the ROM live from
+`0x20000000`) and `utils/ipod/flashsplit/flashsplit.c` (which splits a dump).
+`flashsplit` produces `diskmode`, `diagmode`, `logo`, `diskscan` and `vmcs`, and
+should print `ipod model: ipvd`.
 
-### Para qué lo queremos
+### What we want it for
 
-**No hace falta para arrancar ninguno de los dos firmwares**: los dos arrancan
-hoy sin volcado de la ROM.
+**It isn't needed to boot either of the two firmwares**: both boot today
+without a ROM dump.
 
-> Aquí ponía *"el obstáculo es el segundo núcleo"*. **Esa hipótesis se retiró**
-> en el commit `9d823ec76`, que modeló el COP y no arregló nada. La cadena
-> completa está en [09-historia-5g.md](09-historia-5g.md).
+> This used to say *"the obstacle is the second core"*. **That hypothesis was
+> withdrawn** in commit `9d823ec76`, which modeled the COP and fixed nothing.
+> The full chain is in [09-history-5g.md](09-history-5g.md).
 
-Sigue siendo interesante por dos motivos. La sección **`vmcs`** es el firmware
-del Broadcom, que es lo que `lcd-video.c` busca cuando el BCM no viene ya
-encendido — hoy lo esquivamos poniendo `GPO32_VAL` bit 14 a mano; con el
-volcado real podríamos modelar esa ruta en vez de cortocircuitarla. (El
-`vmcs.bin` en sí **ya lo tenemos** sin volcar la NOR: `extract-vc.py` lo saca
-del FAT16 incrustado en la partición de firmware del disco.) Y tendríamos
-`diskmode` y `diagmode`, que son imágenes arrancables independientes y
-objetivos mucho más pequeños que el retailOS entero.
+It is still interesting for two reasons. The **`vmcs`** section is the Broadcom
+firmware, which is what `lcd-video.c` looks for when the BCM isn't already
+powered on — today we sidestep it by setting `GPO32_VAL` bit 14 by hand; with
+the real dump we could model that path instead of short-circuiting it. (The
+`vmcs.bin` itself **we already have** without dumping the NOR: `extract-vc.py`
+pulls it out of the FAT16 embedded in the disk's firmware partition.) And we
+would have `diskmode` and `diagmode`, which are independent bootable images and
+much smaller targets than the whole retailOS.
 
-Lo que **no** vale: `ipodpatcher` solo lee la partición de firmware del disco,
-no la NOR. El `getflash` de iPodLinux decodifica el actualizador `aupd` que
-Apple deja en el disco, que es la imagen que Apple *escribiría*, no una lectura
-del chip (y su SVN está muerto).
+What **doesn't** work: `ipodpatcher` only reads the disk's firmware partition,
+not the NOR. iPodLinux's `getflash` decodes the `aupd` updater that Apple
+leaves on the disk, which is the image Apple *would write*, not a read of the
+chip (and its SVN is dead).
 
-## Pendiente
+## Pending
 
-> **Corregido el 2026-08-09.** Esta lista tenía dos entradas que ya no son
-> ciertas: *"los dos núcleos… nuestro `sleep_core` no duerme de verdad"*
-> (resuelto en `9d823ec76`: hay dos ARM y los dos duermen y despiertan de
-> verdad) y *"el firmware de Apple sigue atascado en una llamada al sistema con
-> la pila de supervisor sin inicializar"* (esa hipótesis se **retiró** en
-> `d06ce3123` — no era una llamada al sistema, era el impresor de panics de la
-> libc de ARM — y hoy el retailOS arranca y se navega).
+> **Corrected on 2026-08-09.** This list had two entries that are no longer
+> true: *"the two cores… our `sleep_core` doesn't really sleep"* (resolved in
+> `9d823ec76`: there are two ARMs and both really sleep and wake up) and
+> *"Apple's firmware is still stuck in a system call with the supervisor stack
+> uninitialized"* (that hypothesis was **withdrawn** in `d06ce3123` — it wasn't
+> a system call, it was the ARM libc panic printer — and today the retailOS
+> boots and can be navigated).
 
-- **Audio.** Ni I2S ni códec: no suena, en ninguno de los dos firmwares.
-- **USB.** Sin modelar.
-- **El buzón CPU-COP** de `0x60001000`.
-- **Ejecutar el firmware del VideoCore.** El `vmcs.bin` real se sube al chip
-  emulado por DMA, pero sólo se modela el *protocolo*: nadie ejecuta esa
-  imagen.
+- **Audio.** Neither I2S nor codec: no sound, in either firmware.
+- **USB.** Not modeled.
+- **The CPU-COP mailbox** at `0x60001000`.
+- **Running the VideoCore firmware.** The real `vmcs.bin` is uploaded to the
+  emulated chip via DMA, but only the *protocol* is modeled: nobody executes
+  that image.

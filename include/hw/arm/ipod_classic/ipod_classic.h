@@ -135,7 +135,7 @@
  * because Rockbox decodes audio on the ARM and never drives the SM1 engine.
  * Apple's retailOS installs a VIC handler at index 18 (0x08017378) which reads
  * an SM1 register and signals the event its native render pump waits on, so on
- * this SoC line 18 is the audio engine's. INFERIDO from the handler's own
+ * this SoC line 18 is the audio engine's. INFERRED from the handler's own
  * register access; see wiki/19 section 11.25.
  */
 #define S5L8702_SM1_IRQ      18

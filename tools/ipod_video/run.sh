@@ -17,8 +17,8 @@ osos="$root/assets/images-5g/osos_full.bin"
 ENTRY_ROCKBOX=0x735a00
 ENTRY_APPLE=0
 
-[ -x "$qemu" ] || { echo "no encuentro $qemu; compila primero" >&2; exit 1; }
-[ -f "$osos" ] || { echo "no encuentro $osos" >&2; exit 1; }
+[ -x "$qemu" ] || { echo "cannot find $qemu; build it first" >&2; exit 1; }
+[ -f "$osos" ] || { echo "cannot find $osos" >&2; exit 1; }
 
 case "${1:-rockbox}" in
     rockbox) entry=$ENTRY_ROCKBOX ;;

@@ -1,363 +1,363 @@
-# El retailOS del iPod classic 6G arrancando en QEMU
+# The iPod classic 6G retailOS booting in QEMU
 
-Qué hace el `osos` de Apple cuando se le deja correr en la máquina
-`iPod-Classic`, en qué orden pide las cosas, y dónde se para hoy.
+What Apple's `osos` does when it is allowed to run on the
+`iPod-Classic` machine, in what order it asks for things, and where it stops today.
 
-Todo lo que sigue está **medido** salvo donde diga `INFERIDO` (razonado a
-partir de algo verificado) o `INDETERMINADO` (no lo sabemos y no fingimos
-saberlo). Las trazas son reproducibles con las órdenes del final.
+Everything below is **measured** except where it says `INFERRED` (reasoned
+from something verified) or `UNDETERMINED` (we don't know and we don't pretend
+to know). The traces are reproducible with the commands at the end.
 
-> Este documento es **qué hace el firmware y qué se sabe de cada bloque**, y
-> está ordenado por bloque. Si lo que buscas es **cómo se averiguó, en qué orden
-> y qué se creyó por error por el camino**, eso está en
-> [12-historia-6g.md](12-historia-6g.md), que además lleva el catálogo de
-> hipótesis retiradas y el capítulo de las tres veces que un descarte resultó
-> ser la pista buena.
+> This document is **what the firmware does and what is known about each block**, and
+> it is ordered by block. If what you are looking for is **how it was figured out, in what order
+> and what was mistakenly believed along the way**, that is in
+> [12-history-6g.md](12-history-6g.md), which also carries the catalog of
+> retracted hypotheses and the chapter on the three times a dismissal turned out
+> to be the right lead.
 
 ---
 
-## 0. Estado
+## 0. Status
 
-| Hito | Estado |
+| Milestone | Status |
 |---|---|
-| 1. Se carga y ejecuta la primera instrucción | **hecho** |
-| 2. Pasa la inicialización temprana sin colgarse | **hecho** |
-| 3. Inicializa periféricos y llega a su bucle principal | **hecho** — kernel RTXC arrancado, planificador vivo, tarea idle en `0x22003b1c` |
-| 4. Dibuja algo en pantalla | **hecho, con disco** — la pantalla de selección de idioma, 75 463 de 76 800 píxeles. Ver §13 |
-| 5. Se puede **navegar** | **hecho** — rueda, SELECT y **MENU**: menú principal, entrar en Música, y volver con MENU al fotograma exacto del que se salió (§18) |
+| 1. It loads and executes the first instruction | **done** |
+| 2. It gets through early initialization without hanging | **done** |
+| 3. It initializes peripherals and reaches its main loop | **done** — RTXC kernel started, scheduler alive, idle task at `0x22003b1c` |
+| 4. It draws something on screen | **done, with a disk** — the language selection screen, 75 463 of 76 800 pixels. See §13 |
+| 5. It can be **navigated** | **done** — wheel, SELECT and **MENU**: main menu, going into Music, and going back with MENU to the exact frame it left from (§18) |
 
-> **10 de agosto de 2026, aún más tarde — y ahora MENU vuelve.** Los dos
-> síntomas que quedaban —MENU no volvía atrás y el panel derecho no seguía al
-> resaltado— eran **el mismo fallo, y era nuestro**: el compositor dibujaba
-> capas que el huésped había apagado, y desde el primer cambio de pantalla una
-> capa muerta tapaba la interfaz entera. La puerta son **los bits 4..6 del
-> registro `CONTROL` del compositor**. Con ella puesta: menú principal en el
-> idioma elegido, la rueda mueve el resaltado **y el panel derecho lo sigue**,
-> SELECT entra en Música y **MENU vuelve, con 0 píxeles de diferencia respecto
-> al fotograma del que se salió** (§18).
+> **August 10, 2026, even later — and now MENU goes back.** The two
+> remaining symptoms —MENU did not go back and the right panel did not follow the
+> highlight— were **the same bug, and it was ours**: the compositor was drawing
+> layers the guest had turned off, and from the first screen change a
+> dead layer covered the entire interface. The gate is **bits 4..6 of the
+> compositor's `CONTROL` register**. With it in place: main menu in the
+> chosen language, the wheel moves the highlight **and the right panel follows it**,
+> SELECT goes into Music and **MENU goes back, with 0 pixels of difference from
+> the frame it left from** (§18).
 
-> **10 de agosto de 2026, más tarde — y ahora se puede usar.** Con la rueda de
-> clic modelada (§17), `e` mueve la barra de selección de **English** a
-> **日本語**, `q` la devuelve, y Enter **cambia de pantalla**: aparece el icono
-> de la nota musical con el texto **「ミュージックが…」**, es decir, en el idioma
-> que estaba resaltado. Cada giro cambia **8 000 píxeles** sobre un suelo de
-> ruido de **0**. Y hubo que arreglar una segunda cosa que no era la rueda: el
-> **interruptor de bloqueo** del PMU, que tiraba en silencio todos los botones
+> **August 10, 2026, later — and now it can be used.** With the click
+> wheel modeled (§17), `e` moves the selection bar from **English** to
+> **日本語**, `q` brings it back, and Enter **changes screen**: the musical
+> note icon appears with the text **「ミュージックが…」**, that is, in the language
+> that was highlighted. Each turn changes **8 000 pixels** over a noise
+> floor of **0**. And a second thing that was not the wheel had to be fixed: the
+> PMU's **hold switch**, which was silently dropping all buttons
 > (§17.4).
 
-> **10 de agosto de 2026 — hay imagen.** Con un disco construido por
-> `mkdisk6g4k.py` a partir del `.ipsw`, el retailOS pinta **su pantalla de
-> selección de idioma**: lista blanca a la izquierda con nueve escrituras
-> distintas (incluidos 日本語 y Ελληνικά), barra de selección azul, batería, y
-> el degradado con «Welcome» a la derecha. `screendump` + `pixcount.py`:
-> **75 463 píxeles encendidos de 76 800, 404 colores**. Y **se ha mirado la
-> imagen**, no sólo el número: es la interfaz de Apple, no basura (§13).
+> **August 10, 2026 — there is an image.** With a disk built by
+> `mkdisk6g4k.py` from the `.ipsw`, the retailOS paints **its language
+> selection screen**: white list on the left with nine different
+> scripts (including 日本語 and Ελληνικά), blue selection bar, battery, and
+> the gradient with "Welcome" on the right. `screendump` + `pixcount.py`:
+> **75 463 pixels lit out of 76 800, 404 colors**. And **the image has been looked at**,
+> not just the number: it is Apple's interface, not garbage (§13).
 >
-> **Sin disco sigue dando 0 píxeles**, y eso es del huésped, no del modelo: la
-> interfaz se muere buscando tipografías antes de componer nada (§4).
+> **Without a disk it still gives 0 pixels**, and that is on the guest, not the model: the
+> interface dies looking for fonts before composing anything (§4).
 
-Hicieron falta tres cosas a la vez, y las tres estaban en la lista de
-sospechosos del §6:
+Three things were needed at once, and all three were on the list of
+suspects in §6:
 
-1. **`0x38900000` modelado** — es el compositor de vídeo (§13).
-2. **DMAC0/DMAC1 como PL080 de verdad** — es lo que destraba el arranque con
-   disco (§14). Y corrige el §9: el ATA nunca fue el culpable.
-3. Con esas dos, el volumen `rsrc` se monta, aparecen las fuentes y la interfaz
-   compone. Medido con `-d in_asm`, y son las mismas direcciones que llevaban
-   meses dando cero.
+1. **`0x38900000` modeled** — it is the video compositor (§13).
+2. **DMAC0/DMAC1 as real PL080s** — this is what unblocks booting with a
+   disk (§14). And it corrects §9: the ATA was never the culprit.
+3. With those two, the `rsrc` volume mounts, the fonts appear and the interface
+   composes. Measured with `-d in_asm`, and they are the same addresses that had been
+   giving zero for months.
 
-Con `-drive if=ide` el arranque es limpio: cero excepciones, cero reinicios.
-Sin disco entra en un ciclo de caída y reinicio (§4).
+With `-drive if=ide` the boot is clean: zero exceptions, zero reboots.
+Without a disk it enters a crash-and-reboot cycle (§4).
 
-Reproducido en auditoría independiente (agosto de 2026), con estas cifras:
-con disco, 35 s de `-d int` dan 27 166 `Taking exception 5 [IRQ]` y **nada
-más**; `PC = 0x22003b20`, `SP = 0x22010b70`, modo SVC; `0x22003b1c` es
-`mcr p15,0,r0,c7,c0,4` y `0x22003b30` es `b 0x22003b0c`, comprobado en el
-desensamblado. Sin disco, 25 s dan 23 *Data Abort*, 23 llamadas de semihosting
-y 23 `SWRCON`. El DMA de ATA entrega de verdad: con una imagen que lleva
-`55 aa` en `0x1FE`, `pmemsave 0x0be5d3e0` la encuentra ahí después del
-arranque.
+Reproduced in an independent audit (August 2026), with these figures:
+with a disk, 35 s of `-d int` give 27 166 `Taking exception 5 [IRQ]` and **nothing
+else**; `PC = 0x22003b20`, `SP = 0x22010b70`, SVC mode; `0x22003b1c` is
+`mcr p15,0,r0,c7,c0,4` and `0x22003b30` is `b 0x22003b0c`, checked in the
+disassembly. Without a disk, 25 s give 23 *Data Abort*s, 23 semihosting calls
+and 23 `SWRCON`s. The ATA DMA really delivers: with an image that has
+`55 aa` at `0x1FE`, `pmemsave 0x0be5d3e0` finds it there after
+boot.
 
-Y la advertencia que iba con el hito 3, que era cierta hasta el 10 de agosto de
-2026: **«llegar al bucle idle» no es «arrancar»**. Un sistema quieto no es
-necesariamente un sistema que funciona. Con disco eso **ya no aplica** (§13,
-§14): la tarea de interfaz corre y compone. Sin disco sigue aplicando tal cual.
+And the warning that went with milestone 3, which was true until August 10,
+2026: **"reaching the idle loop" is not "booting"**. A quiet system is not
+necessarily a working system. With a disk that **no longer applies** (§13,
+§14): the interface task runs and composes. Without a disk it still applies as is.
 
-> **Nota de lectura, por una tercera auditoría (10 de agosto de 2026).** Los
-> §3, §6 y §9 se escribieron cuando el arranque con disco se paraba, y describen
-> ese estado. **No los leas como el estado de hoy**: los §13 y §14 los corrigen,
-> y donde se contradicen manda lo de más abajo, que es lo medido después. Las
-> partes de §6 y §9 que hablan del arranque **sin** disco siguen siendo válidas.
+> **Reading note, from a third audit (August 10, 2026).** Sections
+> §3, §6 and §9 were written when booting with a disk stopped, and they describe
+> that state. **Do not read them as today's state**: §13 and §14 correct them,
+> and where they contradict each other what is further down wins, as it is what was measured later. The
+> parts of §6 and §9 that talk about booting **without** a disk are still valid.
 
 ---
 
-## 1. La imagen tiene dos regiones de enlace
+## 1. The image has two link regions
 
-`osos_decrypted.bin` no es un binario plano. Es una imagen con carga dispersa
-(*scatter-load*) de ARM ADS/RVCT con **dos** bases:
+`osos_decrypted.bin` is not a flat binary. It is an ARM ADS/RVCT image with scatter
+loading (*scatter-load*) with **two** bases:
 
 ```
-fichero [0x00000, 0x0AE48)  ->  0x22000000   stub + núcleo de arranque (IRAM0)
-fichero [0x0AE48, fin)      ->  0x08000000   el cuerpo del SO (DRAM)
+file [0x00000, 0x0AE48)  ->  0x22000000   stub + boot core (IRAM0)
+file [0x0AE48, end)      ->  0x08000000   the OS body (DRAM)
 ```
 
-En la práctica: `direccion = 0x08000000 + (offset_fichero - 0xAE48)` para todo
-lo que esté a partir de `0x0AE48`. Desensamblar la imagen entera con una sola
-base apunta a la instrucción equivocada en el 99 % del fichero.
+In practice: `address = 0x08000000 + (file_offset - 0xAE48)` for everything
+from `0x0AE48` onwards. Disassembling the whole image with a single
+base points at the wrong instruction in 99 % of the file.
 
-Para desensamblar:
+To disassemble:
 
 ```bash
-# la parte de IRAM
+# the IRAM part
 arm-none-eabi-objdump -D -b binary -m arm --adjust-vma=0x22000000 \
     --start-address=0x22003b0c --stop-address=0x22003b40 osos_decrypted.bin
-# el cuerpo en DRAM
+# the body in DRAM
 arm-none-eabi-objdump -D -b binary -m arm --adjust-vma=0x07FF51B8 \
     --start-address=0x08327760 --stop-address=0x08327780 osos_decrypted.bin
 ```
 
-`0x07FF51B8` no es un número mágico: es `0x08000000 - 0xAE48`.
+`0x07FF51B8` is not a magic number: it is `0x08000000 - 0xAE48`.
 
 ---
 
-## 2. El bloque sin nombre en `0x3C100000`
+## 2. The unnamed block at `0x3C100000`
 
-**Ninguna fuente que tengamos lo documenta.** El único `0x3C100000` de
-`s5l87xx.h` de Rockbox es `LCD_BASE`, y está bajo
-`#if CONFIG_CPU==S5L8700` — otro chip. El modelo de freemyipod tampoco tiene
-nada ahí. La única autoridad es el código de Apple.
+**No source we have documents it.** The only `0x3C100000` in Rockbox's
+`s5l87xx.h` is `LCD_BASE`, and it is under
+`#if CONFIG_CPU==S5L8700` — another chip. The freemyipod model doesn't have
+anything there either. The only authority is Apple's code.
 
-Y es pequeño: buscando la palabra literal `0x3C100000` en la imagen y después
-todos los `LDR` relativos a PC que resuelven a una de esas palabras salen
-**exactamente tres sitios**, así que la lista es completa, no "lo que
-apareció":
+And it is small: searching for the literal word `0x3C100000` in the image and then
+all PC-relative `LDR`s that resolve to one of those words yields
+**exactly three sites**, so the list is complete, not "what
+showed up":
 
-| Sitio | Qué hace |
+| Site | What it does |
 |---|---|
-| `0x08031d9c` | `str r0,[r1,#8]` — semilla: siete bytes de estado + `TECNT` + la palabra de `0x3C700008` |
-| `0x08327738` | `str #0,[r1]` — escribe **cero** en `+0` |
+| `0x08031d9c` | `str r0,[r1,#8]` — seed: seven bytes of state + `TECNT` + the word at `0x3C700008` |
+| `0x08327738` | `str #0,[r1]` — writes **zero** to `+0` |
 | `0x08327760` | `while (!([+0] & 7)) ; return [+4]` |
 
-> **Corrección (auditoría).** El tercer sumando **no** es «la semilla
-> anterior», como decía la primera versión de esta página. El literal de
-> `0x08031de0` es `0x3C700000`, o sea `TIMER_BASE`, y `+0x08` es `TADATA0`.
-> La semilla se mezcla con **dos** lecturas de temporizador independientes, y
-> nadie vuelve a leer nunca `+4` ni `+8` de este bloque: el registro de
-> semilla es de sólo escritura desde el punto de vista del huésped.
+> **Correction (audit).** The third addend is **not** "the previous
+> seed", as the first version of this page said. The literal at
+> `0x08031de0` is `0x3C700000`, i.e. `TIMER_BASE`, and `+0x08` is `TADATA0`.
+> The seed is mixed with **two** independent timer reads, and
+> nobody ever reads `+4` or `+8` of this block again: the seed
+> register is write-only from the guest's point of view.
 
-En contexto: `0x08327714` toma una sección crítica y escribe ese cero;
-`0x08031d30` siembra `+8`, saca veinte palabras por `0x08327760`
-descartando diecinueve, y suelta la sección en `0x08327750`. Sembrar un
-generador y tirar sus primeras salidas es un idiotismo de RNG, y la semilla se
-mezcla con un contador libre (`0x08015748` es un *veneer* a `0x22001EC4`, que
-es "devuelve `TECNT`"). Nada más encaja: entre las veinte lecturas no entra
-ningún dato nuevo, así que un checksum o un hash devolvería la misma palabra
-veinte veces y el bucle no tendría sentido.
+In context: `0x08327714` takes a critical section and writes that zero;
+`0x08031d30` seeds `+8`, pulls twenty words through `0x08327760`
+discarding nineteen, and releases the section at `0x08327750`. Seeding a
+generator and throwing away its first outputs is an RNG idiom, and the seed is
+mixed with a free-running counter (`0x08015748` is a *veneer* to `0x22001EC4`, which
+is "return `TECNT`"). Nothing else fits: no new data comes in between the twenty
+reads, so a checksum or a hash would return the same word
+twenty times and the loop would make no sense.
 
-- Que sea un **RNG**: `INFERIDO`.
-- El contrato de tres registros: **verificado**.
-- Cómo se llama y qué más tiene: `INDETERMINADO`.
+- That it is an **RNG**: `INFERRED`.
+- The three-register contract: **verified**.
+- What it is called and what else it has: `UNDETERMINED`.
 
-### La trampa: no hay bit de habilitación
+### The trap: there is no enable bit
 
-Ninguna instrucción escribe un valor distinto de cero en `+0`. La única
-escritura es el cero de `0x08327738`, y ocurre **antes** de las veinte
-lecturas, no después. Un modelo que condicione "hay dato listo" a que el
-huésped haya habilitado el bloque se cuelga en la primera extracción, porque
-`0x08327760` gira sin *timeout* y sin salida. Los bits de listo tienen que
-subir solos.
+No instruction writes a nonzero value to `+0`. The only
+write is the zero at `0x08327738`, and it happens **before** the twenty
+reads, not after. A model that makes "data ready" conditional on the
+guest having enabled the block hangs on the first extraction, because
+`0x08327760` spins with no *timeout* and no exit. The ready bits have to
+rise on their own.
 
-Es el patrón 1 de [09-historia-5g.md](09-historia-5g.md) — *el bit de estado
-que nunca llega* — con un agravante: aquí el bit parecía tener un habilitador
-y no lo tiene.
+It is pattern 1 of [09-history-5g.md](09-history-5g.md) — *the status bit
+that never arrives* — with an aggravating factor: here the bit seemed to have an enable
+and it doesn't.
 
-### Cuánto pesa de verdad este bloque (medido en la auditoría)
+### How much this block really weighs (measured in the audit)
 
-**Con disco enganchado, el retailOS no toca `0x3C100000` ni una vez**:
-`0x08327760` no aparece en un log de `-d in_asm` de ese arranque. El bloque
-sólo se alcanza en el camino **sin** disco, una vez por intento de arranque, y
-el sitio de siembra `0x08031d9c` no se ejecuta en ninguno de los dos — así que
-el estado del generador arranca siempre de cero.
+**With a disk attached, the retailOS does not touch `0x3C100000` even once**:
+`0x08327760` does not appear in a `-d in_asm` log of that boot. The block
+is only reached on the path **without** a disk, once per boot attempt, and
+the seeding site `0x08031d9c` is executed in neither — so
+the generator's state always starts from zero.
 
-O sea: quitar el falso bit de habilitación desbloqueó de verdad un giro
-infinito **en el estado del árbol de aquel momento**, pero el bloque no está
-en el camino que hoy lleva al bucle idle. No se le puede acreditar el hito 3.
+In other words: removing the false enable bit really unblocked an infinite
+spin **in the state of the tree at that time**, but the block is not
+on the path that today leads to the idle loop. Milestone 3 cannot be credited to it.
 
 ---
 
-## 3. La interfaz de LCD en `0x38300000`
+## 3. The LCD interface at `0x38300000`
 
-Es un puerto de órdenes tipo MPU/8080, **no** un motor de barrido: no hay
-dirección de framebuffer ni temporización de vídeo. El panel guarda su propia
-imagen. El bloque de `0x39200000` (`LCDBASE`, "CLCD CONTROLLER" en Rockbox) sí
-tiene direcciones de framebuffer, y el retailOS apenas lo toca.
+It is an MPU/8080-style command port, **not** a scanning engine: there is no
+framebuffer address and no video timing. The panel keeps its own
+image. The block at `0x39200000` (`LCDBASE`, "CLCD CONTROLLER" in Rockbox) does
+have framebuffer addresses, and the retailOS barely touches it.
 
-Los bits de estado (`LCD_STATUS`, `+0x1C`) son lo que importa, porque cada uno
-es un giro sin *timeout* por los dos lados. **Rockbox y el retailOS coinciden
-en los tres**, que es lo que los hace fiables:
+The status bits (`LCD_STATUS`, `+0x1C`) are what matters, because each one
+is a spin with no *timeout* on both sides. **Rockbox and the retailOS agree
+on all three**, which is what makes them reliable:
 
-| Bit | Significado | Rockbox | retailOS |
+| Bit | Meaning | Rockbox | retailOS |
 |---|---|---|---|
-| 0 | hay dato de lectura en `LCD_DBUFF` | `lcd-s5l8702.c:241` | — |
-| 1 | interfaz ociosa, se puede escribir control | `lcd-s5l8702.c:207` | `0x080b6f98`, `0x080b6ffc` |
-| 4 | FIFO de escritura ocupada | `lcd-s5l8702.c:215` | `0x080a90b4` |
+| 0 | read data available in `LCD_DBUFF` | `lcd-s5l8702.c:241` | — |
+| 1 | interface idle, control can be written | `lcd-s5l8702.c:207` | `0x080b6f98`, `0x080b6ffc` |
+| 4 | write FIFO busy | `lcd-s5l8702.c:215` | `0x080a90b4` |
 
-`s5l87xx.h` anota el valor de reset como `0x0106`: bits 1, 2 y 8 puestos y el 4
-limpio — ocioso y no ocupado, coherente con lo anterior. Qué significan los
-bits 2 y 8 es `INDETERMINADO`; ningún driver los mira.
+`s5l87xx.h` notes the reset value as `0x0106`: bits 1, 2 and 8 set and bit 4
+clear — idle and not busy, consistent with the above. What bits 2 and 8 mean is
+`UNDETERMINED`; no driver looks at them.
 
-Con la ventana sin implementar, los `while (!(LCD_STATUS & 0x2))` no vuelven
-nunca. Es el muro que se comió 48 millones de lecturas en una traza de 45 s.
+With the window unimplemented, the `while (!(LCD_STATUS & 0x2))` loops never
+return. It is the wall that ate 48 million reads in a 45 s trace.
 
-**El bloque es más ancho de lo que Rockbox sabe.** El retailOS escribe
-`0x3830007C = 0x804` y `0x38300088 = 0x1000000` en su primerísima configuración
-de LCD, antes de tocar nada que Rockbox nombre. Los dos son `INDETERMINADO`,
-pero la ventana tiene que cubrirlos o se caen al suelo de E/S de la máquina.
+**The block is wider than Rockbox knows.** The retailOS writes
+`0x3830007C = 0x804` and `0x38300088 = 0x1000000` in its very first LCD
+configuration, before touching anything Rockbox names. Both are `UNDETERMINED`,
+but the window has to cover them or they fall to the machine's I/O floor.
 
-### Por dónde pasan los píxeles: **cero llegan**, y ahora está contado
+### Where the pixels go: **zero arrive**, and now it is counted
 
-Corrección a las dos versiones anteriores de esta sección. Con el panel
-modelado y `LCDTRACE=1` contando cada acceso, un arranque sin disco de 25 s da:
+Correction to the two previous versions of this section. With the panel
+modeled and `LCDTRACE=1` counting each access, a 25 s boot without a disk gives:
 
 ```
 LCDTRACE totals: 63 writes to the command port +0x04, 168 to the data port
                  +0x40..0x5C, of which 0 were pixels; 21 frame-engine starts
 ```
 
-Las 168 escrituras al puerto de datos son **21 arranques × 8 parámetros**: los
-cuatro bytes de `0x2A` (`00 00 01 3f`) y los cuatro de `0x2B` (`00 00 00 ef`).
-**Ni una sola palabra de píxel.** La frase «llega una palabra de píxel por
-escritura de CPU» era ese byte `0x3f`, y la conclusión «luego el framebuffer va
-por DMA» no se sostiene por otro camino: en un arranque sin disco entero,
-**ningún canal de DMAC0 apunta jamás a `LCD_WDATA`** (`-d unimp`: el único
-destino programado es `0x3CA00010`, el FIFO de I²S, y el LLI que se escribe es
-`0x22010020`, también de audio).
+The 168 writes to the data port are **21 starts × 8 parameters**: the
+four bytes of `0x2A` (`00 00 01 3f`) and the four of `0x2B` (`00 00 00 ef`).
+**Not a single pixel word.** The sentence "one pixel word arrives per
+CPU write" was that `0x3f` byte, and the conclusion "so the framebuffer goes
+via DMA" doesn't hold up by another route: in an entire boot without a disk,
+**no DMAC0 channel ever points at `LCD_WDATA`** (`-d unimp`: the only
+destination programmed is `0x3CA00010`, the I²S FIFO, and the LLI written is
+`0x22010020`, also audio).
 
-Lo que sí hace el retailOS es arrancar un **motor de trama** dentro del propio
-bloque de LCD, cuyos registros no conoce ninguna fuente externa:
+What the retailOS does do is start a **frame engine** inside the LCD block
+itself, whose registers no external source knows:
 
-| Registro | Qué se le escribe | Sitio |
+| Register | What is written to it | Site |
 |---|---|---|
-| `+0x70` | `1` — arrancar | `0x08127f94` |
+| `+0x70` | `1` — start | `0x08127f94` |
 | `+0x74` | `(320 << 16) \| 240` | `0x08127f8c` |
-| `+0x78` | `0x0005000a` `INDETERMINADO` | `0x08127f3c` |
-| `+0x7C` | `0x00000804` `INDETERMINADO` | `0x080afb1c` |
-| `+0x80` | `1` … `0` alrededor de fijar la ventana | `0x0808b000`/`0x0808b030` |
-| `+0x88` | `0x01000000` `INDETERMINADO` | `0x080afb0c` |
-| `+0x8C` | `while (LCD[0x8c] & 3);` — bits [1:0] = transferencia en curso, y es un giro **sin timeout** por partida doble | `0x080a4090`, `0x080b0128` |
+| `+0x78` | `0x0005000a` `UNDETERMINED` | `0x08127f3c` |
+| `+0x7C` | `0x00000804` `UNDETERMINED` | `0x080afb1c` |
+| `+0x80` | `1` … `0` around setting the window | `0x0808b000`/`0x0808b030` |
+| `+0x88` | `0x01000000` `UNDETERMINED` | `0x080afb0c` |
+| `+0x8C` | `while (LCD[0x8c] & 3);` — bits [1:0] = transfer in progress, and it is a spin **with no timeout** twice over | `0x080a4090`, `0x080b0128` |
 
-**De dónde lee ese motor es `INDETERMINADO`**: no hay ningún registro de
-dirección de origen en los 256 bytes de la ventana, y no hay DMA apuntándole.
-El modelo lo acepta, lo cuenta y declara `+0x8C` libre, que es lo que ya hacía
-la ventana sin implementar; la diferencia es que ahora lo dice en voz alta.
+**Where that engine reads from is `UNDETERMINED`**: there is no source address
+register in the 256 bytes of the window, and there is no DMA pointing at it.
+The model accepts it, counts it and declares `+0x8C` free, which is what the
+unimplemented window already did; the difference is that now it says so out loud.
 
-Dos cosas están verificadas y acotan la búsqueda:
+Two things are verified and narrow down the search:
 
-- **La ventana de 256 bytes basta.** Con el LCD modelado en `0x38300000..0xFF` y
-  el resto del bloque cayendo al *io floor* de la máquina, un arranque sin disco
-  de 25 s no produce **ni un solo** acceso a `0x383000xx` por encima de `0xFF`
-  (`-d unimp`, cero coincidencias de `addr 0x383`). Así que el registro de
-  origen no está en el bloque de LCD.
-- **Tampoco es DMAC0.** Ningún valor `0x38300040` aparece nunca en el log de
-  `-d unimp`; los únicos destinos que DMAC0 recibe son `0x3ca00010` (FIFO de
-  I²S) y descriptores en `0x22008c5c`/`0x22010020`. Rockbox **sí** empuja el
-  cuadro por DMAC0 (`lcd-s5l8702.c:172`, `dstperi = S5L8702_DMAC0_PERI_LCD_WR`);
-  Apple no. Apple usa el motor de `+0x70`, y ésa es toda la diferencia.
+- **The 256-byte window is enough.** With the LCD modeled at `0x38300000..0xFF` and
+  the rest of the block falling to the machine's *io floor*, a 25 s boot without a disk
+  produces **not a single** access to `0x383000xx` above `0xFF`
+  (`-d unimp`, zero matches for `addr 0x383`). So the source
+  register is not in the LCD block.
+- **Nor is it DMAC0.** No value `0x38300040` ever appears in the
+  `-d unimp` log; the only destinations DMAC0 receives are `0x3ca00010` (I²S
+  FIFO) and descriptors at `0x22008c5c`/`0x22010020`. Rockbox **does** push the
+  frame via DMAC0 (`lcd-s5l8702.c:172`, `dstperi = S5L8702_DMAC0_PERI_LCD_WR`);
+  Apple does not. Apple uses the `+0x70` engine, and that is the whole difference.
 
-### La secuencia completa de "pinta un cuadro", desensamblada
+### The complete "paint a frame" sequence, disassembled
 
-`0x08127f14` es la función entera, y explica por qué salen cero píxeles sin que
-nada falle:
+`0x08127f14` is the entire function, and it explains why zero pixels come out without
+anything failing:
 
 ```asm
 08127f14: push {r3,r4,r5,lr}
 08127f1c: bl 0x8015710          ; (0x2080, 0, 1)
 08127f30: bl 0x8127268
 08127f3c: str r0,[r4,#0x78]     ; LCD[0x78] = 0x0005000a
-08127f54: bl 0x80bcef8          ; (64,64,0,0,0) -> escribe 0x389003AC
-08127f58: ldr r0,[0x089115e4]   ; el registro de driver de panel
-08127f64: cmp r0,#0 ; beq +     ; <- comprobación de nulo
-08127f84: blx [r0+0x0c]         ; (0,0,0,320,240)   <- EL DIBUJADO
+08127f54: bl 0x80bcef8          ; (64,64,0,0,0) -> writes 0x389003AC
+08127f58: ldr r0,[0x089115e4]   ; the panel driver record
+08127f64: cmp r0,#0 ; beq +     ; <- null check
+08127f84: blx [r0+0x0c]         ; (0,0,0,320,240)   <- THE DRAWING
 08127f8c: str r0,[r4,#0x74]     ; LCD[0x74] = 0x014000f0
-08127f94: str r0,[r4,#0x70]     ; LCD[0x70] = 1     <- "presenta"
+08127f94: str r0,[r4,#0x70]     ; LCD[0x70] = 1     <- "presents"
 ```
 
-Ese puntero **está a cero en la imagen** (`0x089115e4` vale `0x00000000` en el
-fichero), así que lo pone alguien en tiempo de ejecución, y la comprobación de
-nulo de `0x08127f64` es real. Tres medidas dicen que pasa:
+That pointer **is zero in the image** (`0x089115e4` holds `0x00000000` in the
+file), so someone sets it at runtime, and the null check
+at `0x08127f64` is real. Three measurements say it passes:
 
-- Con disco, a los 45 s, `xp /1wx 0x089115e4` devuelve **`0x08911fe0`**, uno de
-  los tres registros de driver de panel. `[0x08911fe0 + 0x0c] = 0x080c1164`.
-- Sin disco, `-d in_asm` de 25 s: `0x08127f14` entra **22 veces** y
-  `0x080c1164` entra **22 veces** — una por intento de arranque. La rama nula
-  no se toma nunca.
-- Y `0x080c1164` es justo la función que la cabecera de `ipod_classic_lcd.c`
-  identifica como el `displaylcd_setup()` de Rockbox.
+- With a disk, at 45 s, `xp /1wx 0x089115e4` returns **`0x08911fe0`**, one of
+  the three panel driver records. `[0x08911fe0 + 0x0c] = 0x080c1164`.
+- Without a disk, `-d in_asm` of 25 s: `0x08127f14` is entered **22 times** and
+  `0x080c1164` is entered **22 times** — once per boot attempt. The null branch
+  is never taken.
+- And `0x080c1164` is exactly the function that the header of `ipod_classic_lcd.c`
+  identifies as Rockbox's `displaylcd_setup()`.
 
-Es decir: **el retailOS sí llama a "dibuja la pantalla entera" en cada arranque,
-y lo único que esa llamada emite es `0x2A`, `0x2B`, `0x2C` y ocho bytes de
-parámetro.** Igual que en Rockbox: `displaylcd_setup()` sólo fija la ventana. Lo
-que en Rockbox viene después es `displaylcd_dma()`; lo que en Apple viene
-después es `LCD[0x70] = 1`. Los píxeles nunca pasan por la CPU en ninguno de los
-dos casos.
+That is: **the retailOS does call "draw the whole screen" on every boot,
+and the only thing that call emits is `0x2A`, `0x2B`, `0x2C` and eight parameter
+bytes.** Same as in Rockbox: `displaylcd_setup()` only sets the window. What
+comes next in Rockbox is `displaylcd_dma()`; what comes next in Apple is
+`LCD[0x70] = 1`. The pixels never go through the CPU in either
+case.
 
-### El candidato serio para el origen: `0x38900000`
+### The serious candidate for the source: `0x38900000`
 
-> **RESUELTO, 10 de agosto de 2026 — ver §13.** Era. Es el compositor: cinco
-> descriptores de capa con dirección de origen, stride, formato, tamaño y
-> posición, en `+0x058 + k*0x18`. La sospecha de que `+0x208` fuese el puntero
-> de origen era **falsa** (vale 0 siempre, escrito por `0x08127428`); las
-> direcciones de origen están en `+0x060/78/90/a8/c0` y `+0x038..+0x044`. Lo que
-> sí acertó de lleno fue el método: contar valores y no sólo accesos.
+> **RESOLVED, August 10, 2026 — see §13.** It was. It is the compositor: five
+> layer descriptors with source address, stride, format, size and
+> position, at `+0x058 + k*0x18`. The suspicion that `+0x208` was the source
+> pointer was **false** (it is always 0, written by `0x08127428`); the
+> source addresses are at `+0x060/78/90/a8/c0` and `+0x038..+0x044`. What
+> was spot on was the method: counting values and not just accesses.
 
-Una auditoría posterior retiró el «descartado» que llevaba este bloque. La
-prueba que lo descartaba era «ningún registro recibe un valor con pinta de
-dirección de DRAM», que es cierta pero no dice lo que parecía decir. Lo que hay
-ahí, medido en un arranque sin disco de 25 s con `-d unimp`, son **793
-direcciones distintas escritas**, y dos de ellas son inconfundibles:
+A later audit withdrew the "dismissed" label this block carried. The
+test that dismissed it was "no register receives a value that looks like a
+DRAM address", which is true but doesn't say what it seemed to say. What is
+there, measured in a 25 s boot without a disk with `-d unimp`, are **793
+distinct addresses written**, and two of them are unmistakable:
 
-| Registro | Valor | Qué es |
+| Register | Value | What it is |
 |---|---|---|
-| `+0x400` … `+0xFFC` | `valor == offset - 0x400`, o sea `0,4,8,…,0x3FC` | **768 palabras = 3 × 256: una tabla de gamma/paleta identidad.** Sólo un camino de vídeo escribe eso |
-| `+0x214` | `0x013f00ef` | **exactamente la geometría del panel**, `(319<<16)|239` |
-| `+0x208` | `0` | escrito justo después de la geometría — la forma de un puntero de origen que está a cero |
-| `+0x3AC` | campo de bits de `0x080bcef8(64,64,0,0,0)` | configuración |
+| `+0x400` … `+0xFFC` | `value == offset - 0x400`, i.e. `0,4,8,…,0x3FC` | **768 words = 3 × 256: an identity gamma/palette table.** Only a video path writes that |
+| `+0x214` | `0x013f00ef` | **exactly the panel geometry**, `(319<<16)|239` |
+| `+0x208` | `0` | written right after the geometry — the shape of a source pointer that is zero |
+| `+0x3AC` | bitfield from `0x080bcef8(64,64,0,0,0)` | configuration |
 | `+0x0d4..0xEC` | `1`, `0x1000` | |
-| `+0x0E0` | `0x50004000` (desde `0x081459d4`) | `INDETERMINADO` |
+| `+0x0E0` | `0x50004000` (from `0x081459d4`) | `UNDETERMINED` |
 
-Y el código que lo maneja es **el mismo** que maneja el motor de trama del LCD:
-de los dieciocho literales `0x38900000` de la imagen, catorce están en
-`0x08127xxx`, la misma función que escribe `LCD[0x74]` y `LCD[0x70]`.
+And the code that drives it is **the same** that drives the LCD frame engine:
+of the eighteen `0x38900000` literals in the image, fourteen are in
+`0x08127xxx`, the same function that writes `LCD[0x74]` and `LCD[0x70]`.
 
-- Que `0x38900000` sea el bloque de composición/salida de vídeo del que el motor
-  de `+0x70` toma el cuadro: **`INFERIDO`**, con las dos medidas de arriba a
-  favor y ninguna en contra.
-- Que `+0x208` sea la dirección de origen: **`INFERIDO`**, sin confirmar.
-- El siguiente experimento barato: mapear `0x38900000` como un dispositivo de
-  verdad (hoy cae al *io floor*), registrar quién escribe `+0x208` y con qué, y
-  ver si en algún arranque llega a valer algo distinto de cero.
+- That `0x38900000` is the video composition/output block from which the
+  `+0x70` engine takes the frame: **`INFERRED`**, with the two measurements above in
+  favor and none against.
+- That `+0x208` is the source address: **`INFERRED`**, unconfirmed.
+- The next cheap experiment: map `0x38900000` as a real device
+  (today it falls to the *io floor*), log who writes `+0x208` and with what, and
+  see whether in any boot it ever holds something other than zero.
 
-### El panel, que sí está modelado
+### The panel, which is modeled
 
-`ipod_classic_lcd.c` lleva una memoria de 320×240 en RGB565, ventana con
-`0x2A`/`0x2B`, puntero de escritura tras `0x2C`, y un `qemu_console`. Todos los
-números vienen de una medida, ninguno de un datasheet:
+`ipod_classic_lcd.c` carries a 320×240 RGB565 memory, a window with
+`0x2A`/`0x2B`, a write pointer after `0x2C`, and a `qemu_console`. All the
+numbers come from a measurement, none from a datasheet:
 
-- **Juego de órdenes de 8 bits**: el huésped escribe `LCD_CON = 0x80000c21`, y
-  `0x080b6f8c` sólo produce ese valor por la rama `lcd_get_type() ∈ {0,1}`, que
-  es `LCD_CMDSET_8BIT` de Rockbox (`lcd-6g.c:201-214`).
-- **320×240**: los tres registros de driver de panel entre los que elige el
-  firmware (`0x08911f90`, `0x08911fb8`, `0x08911fe0`) empiezan los tres por
-  `0x00f00140` = `(240<<16)|320`; la ventana que fija es `0..0x13f` × `0..0xef`;
-  y `+0x74` recibe `(320<<16)|240`.
-- **RGB565**: el modo de trama es `LCD_MODE_P16`.
+- **8-bit command set**: the guest writes `LCD_CON = 0x80000c21`, and
+  `0x080b6f8c` only produces that value via the `lcd_get_type() ∈ {0,1}` branch, which
+  is Rockbox's `LCD_CMDSET_8BIT` (`lcd-6g.c:201-214`).
+- **320×240**: the three panel driver records the
+  firmware chooses between (`0x08911f90`, `0x08911fb8`, `0x08911fe0`) all three start with
+  `0x00f00140` = `(240<<16)|320`; the window it sets is `0..0x13f` × `0..0xef`;
+  and `+0x74` receives `(320<<16)|240`.
+- **RGB565**: the frame mode is `LCD_MODE_P16`.
 
-Validación con caso de control, porque un panel que no se prueba no es una
-medida: `tools/ipod_classic/lcdtest.S` emite exactamente esa secuencia y empuja
-76 800 palabras. `screendump` + `tools/ipod_classic/pixcount.py` devuelven
-**76 800 píxeles encendidos y 1920 colores distintos**, que es al píxel lo que
-el test escribe. Si la aritmética de ventana o el formato estuvieran mal, ese
-número saldría mal de forma evidente.
+Validation with a control case, because a panel that is not tested is not a
+measurement: `tools/ipod_classic/lcdtest.S` emits exactly that sequence and pushes
+76 800 words. `screendump` + `tools/ipod_classic/pixcount.py` return
+**76 800 pixels lit and 1920 distinct colors**, which is pixel-for-pixel what
+the test writes. If the window arithmetic or the format were wrong, that
+number would come out obviously wrong.
 
 ```bash
 arm-none-eabi-as -o /tmp/l.o tools/ipod_classic/lcdtest.S
@@ -367,1142 +367,1147 @@ qemu-system-arm -M iPod-Classic -kernel /tmp/l.bin -display none -monitor stdio
 python3 tools/ipod_classic/pixcount.py /tmp/shot.ppm
 ```
 
-Cuando el retailOS dibuja (ver §4, ocurre en el camino de error) emite
+When the retailOS draws (see §4, it happens on the error path) it emits
 `0x2A`, `0x2B`, `0x2C` — *column address set*, *page address set*, *memory
-write* — que es el juego de órdenes de un controlador tipo ILI9341. Cuál está
-puesto de verdad se elige en tiempo de ejecución con el *strap* de GPIO
-`PDAT(6)` bits [5:4], que no modelamos.
+write* — which is the command set of an ILI9341-style controller. Which one is
+really fitted is chosen at runtime with the GPIO *strap*
+`PDAT(6)` bits [5:4], which we don't model.
 
 ---
 
-## 4. El ciclo de caída sin disco, y por qué era invisible
+## 4. The crash loop without a disk, and why it was invisible
 
-Sin `-drive`, la máquina no se quedaba ociosa: **se caía y reiniciaba**, unas
-diecinueve veces cada veinte segundos. Con `-d int`: 19 *Data Abort*, 19
-llamadas de semihosting y 19 escrituras de `SWRCON`.
+Without `-drive`, the machine didn't sit idle: **it crashed and rebooted**,
+about nineteen times every twenty seconds. With `-d int`: 19 *Data Aborts*, 19
+semihosting calls and 19 writes to `SWRCON`.
 
-No se veía porque el diagnóstico salía por **stderr** y las trazas lo tiraban.
-El firmware lo estaba diciendo en voz alta todo el tiempo:
+It couldn't be seen because the diagnostics went out on **stderr** and the
+traces discarded it. The firmware was saying it out loud the whole time:
 
 ```
 CPU_exception_handler
 qemu-system-arm: warning: S5L8702: guest asked for a software reset (SWRCON = 0xaa5), next image "--------"
 ```
 
-> Lección, y es la número 1 de [09-historia-5g.md](09-historia-5g.md): si el
-> firmware imprime algo, escúchalo. El semihosting ya estaba encendido por
-> defecto en esta máquina y aun así estuvimos un rato mirando histogramas de
-> `-d unimp` en vez de leer las dos líneas que explicaban todo.
+> Lesson, and it's number 1 in [09-history-5g.md](09-history-5g.md): if the
+> firmware prints something, listen to it. Semihosting was already on by
+> default on this machine and even so we spent a while looking at `-d unimp`
+> histograms instead of reading the two lines that explained everything.
 
-### La causa
+### The cause
 
 ```
 ...with DFSR 0x5 DFAR 0xea00002a
 ```
 
-`0xEA00002A` no es una dirección: es una instrucción de salto ARM. Y es
-`0xEA000002 + 0x28`, donde `0xEA000002` es exactamente la palabra que `main`
-escribe en `[0x22000000]` (paso 3 de su inicialización).
+`0xEA00002A` isn't an address: it's an ARM branch instruction. And it is
+`0xEA000002 + 0x28`, where `0xEA000002` is exactly the word that `main` writes
+to `[0x22000000]` (step 3 of its initialization).
 
-La instrucción que aborta es un par de saltos de C++:
+The aborting instruction is a pair of C++ hops:
 
 ```asm
-0815b230:  ldr r0,[sp]        ; puntero al objeto
+0815b230:  ldr r0,[sp]        ; pointer to the object
 0815b234:  bic r0,r0,#1
-0815b238:  ldr r1,[r0]        ; puntero a la vtable
-0815b23c:  ldr r1,[r1,#0x28]  ; <-- aborta
+0815b238:  ldr r1,[r0]        ; pointer to the vtable
+0815b23c:  ldr r1,[r1,#0x28]  ; <-- aborts
 0815b240:  blx r1
 ```
 
-Es una **llamada a método virtual sobre un objeto nulo**. Y aquí está lo
-interesante: como el propio firmware mapea VA 0 sobre IRAM0, la desreferencia
-nula **no falla** — lee tranquilamente una palabra de la tabla de vectores — y
-sólo revienta la segunda. Un puntero nulo en esta máquina no da un fallo
-limpio: da un valor plausible y una caída doscientos bytes más tarde.
+It is a **virtual method call on a null object**. And here's the interesting
+part: since the firmware itself maps VA 0 onto IRAM0, the null dereference
+**doesn't fail** — it calmly reads a word from the vector table — and only the
+second one blows up. A null pointer on this machine doesn't give a clean
+fault: it gives a plausible value and a crash two hundred bytes later.
 
-**Corrección de agosto de 2026, y es una corrección de fondo: el nulo NO viene
-de la búsqueda de recursos.** Medido con `gdbpoke.py` (§10), parando en cada
-instrucción de esa función:
+**Correction from August 2026, and it is a fundamental one: the null does NOT
+come from the resource lookup.** Measured with `gdbpoke.py` (§10), stopping at
+each instruction of that function:
 
-| Parada | Qué se lee |
+| Stop | What is read |
 |---|---|
-| `0x0815b1e0` | `r0 = 0x086aef48` — la búsqueda de `"FONT"` **encuentra** el recurso |
-| `0x0815b1f4` | `r0 = 0x0874a444` — la de `"Str "` **también** |
-| `0x0815b20c` | `r5 = 0x0be6770c` — no nulo, no salta a la salida |
-| `0x0815b230` | `[sp] = {0, 0}` — **aquí** aparece el nulo |
-| `0x0815b23c` | `r1 = 0xea000002`, la palabra de VA 0; la siguiente carga aborta |
+| `0x0815b1e0` | `r0 = 0x086aef48` — the `"FONT"` lookup **finds** the resource |
+| `0x0815b1f4` | `r0 = 0x0874a444` — the `"Str "` one **does too** |
+| `0x0815b20c` | `r5 = 0x0be6770c` — not null, doesn't jump to the exit |
+| `0x0815b230` | `[sp] = {0, 0}` — **here** the null appears |
+| `0x0815b23c` | `r1 = 0xea000002`, the word at VA 0; the next load aborts |
 
-Y el registro `FONT` que devuelve, leído del huésped, es
-`0dad0001 0000003a 01d58101 0dad0002`: id del nombre, cuerpo 58, estilo.
+And the `FONT` record it returns, read from the guest, is
+`0dad0001 0000003a 01d58101 0dad0002`: name id, size 58, style.
 
-O sea que la cadena de proveedores funciona y el recurso existe. Lo que falla es
-la construcción del objeto de texto, y la razón es concreta:
+So the provider chain works and the resource exists. What fails is the
+construction of the text object, and the reason is concrete:
 
 ```
-0x0815b22c  bl 0x08239658   "hazme una cadena con esta fuente"
+0x0815b22c  bl 0x08239658   "make me a string with this font"
 0x08239658  -> 0x08238fa0 -> 0x082393ec
-0x082393ec  busca la fuente por nombre, cuerpo y estilo en DOS listas:
-              [0x08912cd8 + 8]  fuentes ya instanciadas
-              [0x08912cd8 + 4]  ficheros de fuente disponibles
-            si ninguna casa, devuelve {0,0}
-las dos listas las llena una sola función, 0x08239220, y hace esto:
+0x082393ec  looks up the font by name, size and style in TWO lists:
+              [0x08912cd8 + 8]  fonts already instantiated
+              [0x08912cd8 + 4]  available font files
+            if neither matches, returns {0,0}
+both lists are filled by a single function, 0x08239220, which does this:
   0x080518a4(1, &vol, &path)   ->  vol = 4, path = "Resources/Fonts"  (0x08380628)
-  0x08239134(vol, path)        ->  recorre ESE DIRECTORIO y registra cada fichero
+  0x08239134(vol, path)        ->  walks THAT DIRECTORY and registers each file
 ```
 
-`0x08239134` es un iterador de directorio de verdad — salta las entradas que
-empiezan por `.` (compara con 46) y llama a `0x08107184` por cada nombre.
+`0x08239134` is a real directory iterator — it skips entries that begin with
+`.` (compares with 46) and calls `0x08107184` for each name.
 
-**Conclusión, VERIFICADA de punta a punta: el retailOS no lleva ninguna fuente
-dentro de la imagen. Todas viven en `\Resources\Fonts\` de la partición `rsrc`
-del disco** (`Helvetica.ttf`, `HelveticaBold.ttf`, `CJK11.ttf`, `CJK16.ttf`,
-cuatro `MonoHope-*.sbit`). Sin volumen montado la lista está vacía, no casa
-ninguna fuente, y el llamador llama a un método virtual sobre el `{0,0}`.
+**Conclusion, VERIFIED end to end: the retailOS carries no font inside the
+image. They all live in `\Resources\Fonts\` on the disk's `rsrc` partition**
+(`Helvetica.ttf`, `HelveticaBold.ttf`, `CJK11.ttf`, `CJK16.ttf`, four
+`MonoHope-*.sbit`). With no volume mounted the list is empty, no font matches,
+and the caller calls a virtual method on the `{0,0}`.
 
-Lo confirma un experimento no destructivo: con `gdbpoke.py --skip
-0x0815b230=0x0815b270:0` se salta esa llamada sin tocar la imagen de Apple, y el
-arranque **vuelve a caer en el mismo ciclo**, ahora con `DFAR 0xEA00003E` en vez
-de `0xEA00002A` — otro método virtual, ranura `+0x3C`, sobre otro nulo del mismo
-origen. No es un fallo que se pueda esquivar: sin fuentes, todo el grafo de
-objetos de la interfaz sale nulo.
+A non-destructive experiment confirms it: with `gdbpoke.py --skip
+0x0815b230=0x0815b270:0` that call is skipped without touching Apple's image,
+and the boot **falls back into the same loop**, now with `DFAR 0xEA00003E`
+instead of `0xEA00002A` — another virtual method, slot `+0x3C`, on another null
+of the same origin. It's not a fault that can be sidestepped: without fonts,
+the interface's entire object graph comes out null.
 
-**Con un disco enganchado, el ciclo entero desaparece** — pero por la razón mala:
-la interfaz ni siquiera llega a intentarlo (§9).
+**With a disk attached, the whole loop disappears** — but for the wrong reason:
+the interface doesn't even get as far as trying (§9).
 
 ---
 
-## 5. El puente ATA de `0x38700000`
+## 5. The ATA bridge at `0x38700000`
 
-No es un *task file*: los ocho registros de dispositivo están en `0x54..0x74`
-pero no se leen directamente. Leer uno arranca un ciclo de bus cuyo resultado
-aparece después en `ATA_PIO_RDATA`. Rockbox lo escribe entero
-(`storage_ata-6g.c`) y el driver de Apple es la misma función compilada de otra
-fuente (`0x08096824`).
+It is not a *task file*: the eight device registers are at `0x54..0x74` but
+they aren't read directly. Reading one starts a bus cycle whose result appears
+later in `ATA_PIO_RDATA`. Rockbox writes it out in full (`storage_ata-6g.c`)
+and Apple's driver is the same function compiled from a different source
+(`0x08096824`).
 
-### El DMA
+### The DMA
 
-Especificado dos veces, y las dos coinciden: Rockbox en
-`storage_ata-6g.c:851-880`, y el driver de Apple trazado registro a registro.
+Specified twice, and the two agree: Rockbox in `storage_ata-6g.c:851-880`, and
+Apple's driver traced register by register.
 
 ```
-<orden ATA 0xc8 a ATA_PIO_CSD>
-ATA_TBUF_START = buffer        (ATA_SBUF_START al escribir)
+<ATA command 0xc8 to ATA_PIO_CSD>
+ATA_TBUF_START = buffer        (ATA_SBUF_START when writing)
 ATA_TBUF_SIZE  = bytes
 ATA_XFR_NUM    = bytes - 1
 ATA_CFG |= flags ; ATA_CFG &= ~(BIT(7)|BIT(8))
 ATA_IRQ = BITRANGE(0,4) ; ATA_IRQ_MASK = BIT(0)
-ATA_COMMAND = BIT(0)           <- y sólo ahora se mueve
-<espera la interrupción>
-ATA_COMMAND = BIT(1)           <- fin
+ATA_COMMAND = BIT(0)           <- and only now does it move
+<wait for the interrupt>
+ATA_COMMAND = BIT(1)           <- done
 ```
 
-`ATA_CFG` bit 4 elige el sentido: puesto = búfer de origen = escritura a disco.
+`ATA_CFG` bit 4 selects the direction: set = source buffer = write to disk.
 
-**El orden es lo que da forma al modelo, y es el contrario del intuitivo.** La
-dirección del búfer se programa *después* de la orden ATA, así que `start_dma`
-no puede saber dónde va el dato: sólo puede quedarse con el *callback* que le
-da el núcleo IDE, y es la escritura del bit de arranque la que lo dispara.
+**The order is what shapes the model, and it is the opposite of the intuitive
+one.** The buffer address is programmed *after* the ATA command, so
+`start_dma` can't know where the data goes: it can only hold on to the
+*callback* the IDE core gives it, and it is the write of the start bit that
+triggers it.
 
-Dos trampas que cuestan una tarde cada una:
+Two traps that cost an afternoon each:
 
-- `s->bus.dma` hay que reclamarlo **después** de `ide_bus_init_output_irq`, no
-  antes: lo último que hace esa función es poner `bus->dma = &ide_dma_nop`.
-  Reclamarlo antes hace que toda orden de DMA se acepte y se ignore en
-  silencio, que se parece muchísimo a un disco que no contesta.
-- Comprobar el DMA por la ausencia de quejas no vale. Se comprueba leyendo la
-  memoria del huésped: tras la primera transferencia, `0x0be5d3e0 + 0x1fe`
-  contiene `55 aa`, la firma del MBR del sector 0 de la imagen, en el byte que
-  le toca.
+- `s->bus.dma` has to be claimed **after** `ide_bus_init_output_irq`, not
+  before: the last thing that function does is set `bus->dma = &ide_dma_nop`.
+  Claiming it before makes every DMA command get accepted and silently ignored,
+  which looks a lot like a disk that doesn't answer.
+- Checking the DMA by the absence of complaints doesn't work. It is checked by
+  reading guest memory: after the first transfer, `0x0be5d3e0 + 0x1fe`
+  contains `55 aa`, the MBR signature of sector 0 of the image, in the right
+  byte.
 
 ---
 
-## 6. Dónde se paraba con disco (histórico, **superado** por §13 y §14)
+## 6. Where it stopped with a disk (historical, **superseded** by §13 and §14)
 
-> **Esta sección describe el estado anterior al 10 de agosto de 2026.** Con
-> disco ya no se para aquí: la tabla «Lo que NO se ejecuta» de más abajo es
-> exactamente la que el §14 vuelve a medir y sale toda a **1**. Se conserva
-> porque el método (medir entradas de función, no direcciones de mitad de
-> función) es lo que hizo falta para llegar al §14. **Sin disco** todo lo de
-> esta sección sigue siendo válido.
+> **This section describes the state before August 10, 2026.** With a disk it
+> no longer stops here: the "What does NOT execute" table below is exactly the
+> one that §14 measures again, and it comes out all **1**. It is kept because
+> the method (measuring function entries, not mid-function addresses) is what
+> was needed to get to §14. **Without a disk**, everything in this section is
+> still valid.
 
-Con disco, el sistema llegaba a su **bucle idle** y se quedaba:
+With a disk, the system reached its **idle loop** and stayed there:
 
 ```
 22003b1c:  mcr p15,0,r0,c7,c0,4    ; wait for interrupt (ARM926)
 22003b30:  b   0x22003b0c
 ```
 
-`PC = 0x22003b20`, modo SVC, `SP = 0x22010b70` (la pila SVC inicial). El kernel
-RTXC está arrancado, el planificador corre, las interrupciones de timer entran,
-y **todas las tareas de aplicación están bloqueadas**.
+`PC = 0x22003b20`, SVC mode, `SP = 0x22010b70` (the initial SVC stack). The
+RTXC kernel is up, the scheduler runs, timer interrupts come in, and **all
+application tasks are blocked**.
 
-Lo que sí hace antes de dormirse:
+What it does do before going to sleep:
 
-- MIU, reloj, PMU por I²C, GPIO, click wheel, controlador de interrupciones
-  externas, y el ATA.
-- Dos lecturas por DMA, las dos en **LBA 0**: ocho sectores y luego sesenta y
-  cuatro. Los bytes llegan (verificado, §5). Después, nada más.
-- Sondea `WHEELINT` (`0x3C200014`) unas **120 veces por segundo** — medido en
-  la auditoría con dos carreras de 20 s y 50 s: 3071 y 6770 lecturas, o sea
-  123/s en régimen. (La primera versión de esta página decía «tres veces por
-  segundo»; era falso por un factor de 40.) Sigue sin ser un giro bloqueante —
-  un giro son millones — y sigue demostrando lo mismo: **hay tareas corriendo
-  además de la idle**, que es la mejor prueba de que el planificador vive.
+- MIU, clock, PMU over I²C, GPIO, click wheel, external interrupt controller,
+  and the ATA.
+- Two DMA reads, both at **LBA 0**: eight sectors and then sixty-four. The
+  bytes arrive (verified, §5). After that, nothing more.
+- It polls `WHEELINT` (`0x3C200014`) about **120 times per second** — measured
+  in the audit with two runs of 20 s and 50 s: 3071 and 6770 reads, i.e. 123/s
+  at steady state. (The first version of this page said "three times per
+  second"; that was off by a factor of 40.) It is still not a blocking spin — a
+  spin would be millions — and it still shows the same thing: **there are tasks
+  running besides the idle one**, which is the best proof that the scheduler is
+  alive.
 
-### Lo que NO se ejecuta, y esto es el dato importante
+### What does NOT execute, and this is the important data point
 
-| Dirección | Qué es | ¿Se ejecuta? |
+| Address | What it is | Does it execute? |
 |---|---|---|
-| `0x0805712c` | el parser de la partición de firmware: en `0x08057198` compara `]ih[` (`0x5B68695D`, verificado en `0x080572d4`) con el offset `0x100` de lo que leyó | **no, nunca** |
-| `0x0815b1b8` | el código de UI que dibuja texto (el que caía sin disco) | **no** |
-| `0x08239658` | la construcción del objeto de cadena | **no** |
-| `0x08236130` | la búsqueda de recursos | sí, una vez |
+| `0x0805712c` | the firmware partition parser: at `0x08057198` it compares `]ih[` (`0x5B68695D`, verified at `0x080572d4`) with offset `0x100` of what it read | **no, never** |
+| `0x0815b1b8` | the UI code that draws text (the one that crashed without a disk) | **no** |
+| `0x08239658` | the construction of the string object | **no** |
+| `0x08236130` | the resource lookup | yes, once |
 
-> **Corrección (auditoría).** La primera versión de esta tabla medía el parser
-> por `grep -c '^0x08057160'`, y **esa medida no valía**: `0x08057160` es
-> `add r0,sp,#4` en mitad de una función, no una entrada, así que un log de
-> `-d in_asm` habría dado cero aunque el código corriera en cada arranque (ver
-> §8). La entrada real de la función es `0x0805712c` — `push {r1..fp,lr}` —, y
-> medida por ahí la conclusión **se mantiene**: cero, con disco y sin él. Las
-> otras tres direcciones sí son entradas de función (`push` como primera
-> instrucción), así que ésas siempre fueron válidas.
+> **Correction (audit).** The first version of this table measured the parser
+> with `grep -c '^0x08057160'`, and **that measurement was invalid**:
+> `0x08057160` is `add r0,sp,#4` in the middle of a function, not an entry, so
+> a `-d in_asm` log would have given zero even if the code ran on every boot
+> (see §8). The function's real entry is `0x0805712c` — `push {r1..fp,lr}` —,
+> and measured there the conclusion **stands**: zero, with and without a disk.
+> The other three addresses are function entries (`push` as the first
+> instruction), so those were always valid.
 
-O sea: **el bloqueo está aguas arriba tanto del parseo de la partición de
-firmware como del dibujado**, y no es el almacenamiento, porque el
-almacenamiento funciona.
+In other words: **the blockage is upstream of both the firmware partition
+parsing and the drawing**, and it isn't the storage, because the storage
+works.
 
-### Hipótesis descartadas con medida
+### Hypotheses ruled out by measurement
 
-| Hipótesis | Descartada porque |
+| Hypothesis | Ruled out because |
 |---|---|
-| "Le falta un MBR válido" | Con MBR y dos particiones (tipo 0 + FAT32) hace exactamente las mismas dos lecturas |
-| "La partición de firmware tiene que estar en LBA 0" | Con la imagen `Firmware-24.9.1.2` cruda en el sector 0, y `]ih[` verificado en `0x100`, las mismas dos lecturas |
-| "El disco es demasiado pequeño" | Con 64 MB, 289 MB, 512 MB y 80 GB: las mismas dos lecturas |
-| "Está bloqueado en el DMA de ATA" | Lo estuvo, y ya no: las transferencias terminan y el huésped acusa la interrupción |
-| "Está bloqueado en el LCD" | Lo estuvo, y ya no; ahora, **con disco**, toca el bloque exactamente cinco veces y para (`LCDTRACE=1`: `+0x00 = 0x80000000`, `+0x00 = 0x80100db1`, `+0x88`, `+0x20`, `+0x7c`, todas desde `0x080afaf4`) — no dos, como decía la versión anterior de esta línea |
-| "El click wheel lo tiene parado" | Lo sondea ~123 veces/s desde una tarea periódica (medido: 3071 lecturas en 20 s, 6770 en 50 s); no es un giro bloqueante |
+| "It's missing a valid MBR" | With an MBR and two partitions (type 0 + FAT32) it does exactly the same two reads |
+| "The firmware partition has to be at LBA 0" | With the raw `Firmware-24.9.1.2` image at sector 0, and `]ih[` verified at `0x100`, the same two reads |
+| "The disk is too small" | With 64 MB, 289 MB, 512 MB and 80 GB: the same two reads |
+| "It's blocked in the ATA DMA" | It was, and no longer is: the transfers complete and the guest acknowledges the interrupt |
+| "It's blocked in the LCD" | It was, and no longer is; now, **with a disk**, it touches the block exactly five times and stops (`LCDTRACE=1`: `+0x00 = 0x80000000`, `+0x00 = 0x80100db1`, `+0x88`, `+0x20`, `+0x7c`, all from `0x080afaf4`) — not twice, as the previous version of this line said |
+| "The click wheel has it stalled" | It polls it ~123 times/s from a periodic task (measured: 3071 reads in 20 s, 6770 in 50 s); it isn't a blocking spin |
 
-### Lo siguiente que hay que averiguar
+### The next thing to figure out
 
-Qué está esperando la tarea bloqueada. La vía más prometedora no es adivinar
-periféricos, es preguntárselo al kernel: la imagen trae **RTXCbug** compilado,
-el depurador interactivo de RTXC, con su REPL (`"RTXCbug> "`, `"Bad command"`,
-`"G - Go to Multitasking Mode"`, `"** Task Register Snapshot **"`) y un
-retarget completo de semihosting, incluido `SYS_READC`. Si se consigue entrar,
-dice directamente qué tareas hay y en qué están bloqueadas.
+What the blocked task is waiting for. The most promising route is not guessing
+peripherals, it's asking the kernel: the image has **RTXCbug** compiled in,
+RTXC's interactive debugger, with its REPL (`"RTXCbug> "`, `"Bad command"`,
+`"G - Go to Multitasking Mode"`, `"** Task Register Snapshot **"`) and a full
+semihosting retarget, including `SYS_READC`. If we manage to get in, it tells
+us directly which tasks there are and what they're blocked on.
 
-Candidatos por descartar, en orden de coste. **Los números 1 y 4 eran los
-buenos, y hacían falta los dos: ver §13 y §14.**
+Candidates to rule out, in order of cost. **Numbers 1 and 4 were the right
+ones, and both were needed: see §13 and §14.**
 
-1. ~~El bloque `0x38900000`~~ **RESUELTO (§13): es el compositor.** Lo que la
-   máquina cubría con el *io floor* — leer cero y tirar las escrituras — no era
-   neutral: seis funciones hacen lectura‑modificación‑escritura sobre `+0x008`,
-   así que cada una borraba lo que había puesto la anterior.
-2. GPIO de verdad: hoy devuelve cero a todo. `PDAT(11)` bit 1 = 0 elige ATA
-   paralelo, que es lo que queremos, pero `PDAT(6)` (tipo de panel) y
-   `PDAT(10)` (auriculares) también leen cero y puede que no deban.
-3. ~~El EIC (`0x39A00000`), que se programa y nunca dispara.~~ Modelled in
-   `ipod_classic_eic.c`: the standby path waits on `ALVCON` and wakes through it.
-4. ~~DMAC0 (PL080), que se programa con descriptores en DRAM y nunca completa.~~
-   **RESUELTO (§14), y era la causa del bloqueo con disco.** Esta línea estaba
-   escrita desde el principio y en el último lugar de la lista; el coste de
-   arreglarlo resultó ser el más bajo de los cuatro, porque QEMU ya trae
-   `hw/dma/pl080.c`.
+1. ~~The `0x38900000` block~~ **RESOLVED (§13): it is the compositor.** What
+   the machine covered with the *io floor* — reading zero and dropping writes —
+   wasn't neutral: six functions do read-modify-write on `+0x008`, so each one
+   erased what the previous one had set.
+2. Real GPIO: today it returns zero for everything. `PDAT(11)` bit 1 = 0
+   selects parallel ATA, which is what we want, but `PDAT(6)` (panel type) and
+   `PDAT(10)` (headphones) also read zero and maybe they shouldn't.
+3. ~~The EIC (`0x39A00000`), which gets programmed and never fires.~~ Modelled
+   in `ipod_classic_eic.c`: the standby path waits on `ALVCON` and wakes
+   through it.
+4. ~~DMAC0 (PL080), which gets programmed with descriptors in DRAM and never
+   completes.~~ **RESOLVED (§14), and it was the cause of the blockage with a
+   disk.** This line was written from the very beginning and in last place on
+   the list; the cost of fixing it turned out to be the lowest of the four,
+   because QEMU already ships `hw/dma/pl080.c`.
 
 ---
 
-## 9. Con disco: dónde se paraba la interfaz, instrucción a instrucción (histórico)
+## 9. With a disk: where the interface stopped, instruction by instruction (historical)
 
-> **Superado por el §14, que corrige el diagnóstico final.** La cadena de
-> llamadas de abajo está bien medida y sigue siendo la buena; lo que estaba mal
-> era la última línea, «el agujero está entre *el DMA terminó* y *despierta a
-> quien lo pidió*» leída como un problema del **ATA**. No lo era: quien no
-> volvía era el `memcpy` por **DMAC0** que va dentro de esa misma llamada de
-> lectura. Ver §14. Hoy, con `E.img`, la cadena entera se recorre y
-> `0x081228d0` **sí** se alcanza.
+> **Superseded by §14, which corrects the final diagnosis.** The call chain
+> below is well measured and is still the right one; what was wrong was the
+> last line, "the gap is between *the DMA finished* and *wake whoever asked for
+> it*" read as an **ATA** problem. It wasn't: what didn't return was the
+> **DMAC0** `memcpy` that sits inside that same read call. See §14. Today, with
+> `E.img`, the whole chain is traversed and `0x081228d0` **is** reached.
 
-Esto responde a «qué está esperando la tarea bloqueada» del §6, que
-llevaba abierto desde el principio. Todo medido con `gdbpoke.py` y un disco de
-64 MB a ceros; con `A.img` (MBR válido, partición de firmware real y FAT32 con
-`iPod_Control`) sale exactamente igual.
+This answers §6's "what the blocked task is waiting for", which had been open
+from the beginning. All measured with `gdbpoke.py` and a zero-filled 64 MB
+disk; with `A.img` (valid MBR, real firmware partition and FAT32 with
+`iPod_Control`) it comes out exactly the same.
 
-La cadena, de fuera adentro. Cada eslabón es una parada real del depurador:
+The chain, from the outside in. Each link is a real debugger stop:
 
 ```
-0x0811c008   crea la tarea RTXC "MP3ExampleTask"
-0x0811bf68     cuerpo de la tarea de interfaz          <- llega
-0x0811bfb8       blx [obj+0x204] -> 0x081a3134         <- entra y NO vuelve
-0x081a3134         blx [obj+0x208] -> 0x081a3360       <- entra y NO vuelve
-0x081a3360           bucle sobre 9 fábricas de subsistema; se para en la nº 8
+0x0811c008   creates the RTXC task "MP3ExampleTask"
+0x0811bf68     body of the interface task              <- reached
+0x0811bfb8       blx [obj+0x204] -> 0x081a3134         <- enters and does NOT return
+0x081a3134         blx [obj+0x208] -> 0x081a3360       <- enters and does NOT return
+0x081a3360           loop over 9 subsystem factories; stops at no. 8
 0x0824caa8             new(0x124) + constructor 0x0824cc8c
-0x0824cc8c               bl 0x08035bf8                 <- lector de SysInfo
+0x0824cc8c               bl 0x08035bf8                 <- SysInfo reader
 0x08035bf8                 bl 0x080ca440
 0x080ca440                   bl 0x0815f818
 0x0815f818                     bl 0x0815f7c0
 0x0815f7c0                       bl 0x0812289c
-0x0812289c   81228b4: bl 0x0805c430      ; toma el mutex de [obj+0x2c]
-             81228c4: ldrb r0,[r4,#0x28] ; <- LA BANDERA
+0x0812289c   81228b4: bl 0x0805c430      ; takes the mutex at [obj+0x2c]
+             81228c4: ldrb r0,[r4,#0x28] ; <- THE FLAG
              81228c8: cmp  r0,#0
-             81228cc: beq  0x81228bc     ; 81228bc: bl 0x080c8968  = esperar
+             81228cc: beq  0x81228bc     ; 81228bc: bl 0x080c8968  = wait
 ```
 
-**`while (![obj+0x28]) wait();`** — la interfaz espera a que haya un volumen
-montado. Con disco, `0x081228d0` (la salida del bucle) no se alcanza jamás; sin
-disco sí. La CPU se va al bucle idle porque la tarea está bloqueada en un objeto
-del kernel, no girando: por eso 27 000 IRQ y ninguna otra excepción.
+**`while (![obj+0x28]) wait();`** — the interface waits until there is a
+mounted volume. With a disk, `0x081228d0` (the loop exit) is never reached;
+without a disk it is. The CPU goes to the idle loop because the task is blocked
+on a kernel object, not spinning: that's why there are 27,000 IRQs and no other
+exception.
 
-Quién levanta la bandera: **sólo** `0x08122a04`, con dos llamadores,
-`0x08059ae4` y `0x081229f0`, los dos dentro de `0x08059aa0` = «montar el
-volumen». Y `0x08059aa0` tiene **un solo** llamador, `0x083287e0`, que es el
-cuerpo de la tarea que consume la cola 4:
+Who raises the flag: **only** `0x08122a04`, with two callers, `0x08059ae4` and
+`0x081229f0`, both inside `0x08059aa0` = "mount the volume". And `0x08059aa0`
+has **a single** caller, `0x083287e0`, which is the body of the task that
+consumes queue 4:
 
 ```
 0x0832878c   for(;;) { msg = KS_receive(4); switch (msg[0x10]) {
-                 case 0: 0x08059aa0(dev, 0);   // montar
-                 case 1: 0x08126638(dev);      // sin medio
+                 case 0: 0x08059aa0(dev, 0);   // mount
+                 case 1: 0x08126638(dev);      // no medium
                  case 2: 0x081263dc(dev); ... } }
 ```
 
-Sin disco, esa tarea recibe mensajes y monta (falla el sondeo, pero **levanta la
-bandera igual** y la interfaz sigue). Con disco **no recibe ninguno**:
-`0x083287b4` no se alcanza en 90 s.
+Without a disk, that task receives messages and mounts (the probe fails, but
+**it raises the flag anyway** and the interface carries on). With a disk **it
+receives none**: `0x083287b4` is not reached in 90 s.
 
-### Y el mensaje sí se envía: el que no llega a escuchar es el receptor
+### And the message is sent: it's the receiver that never gets to listen
 
-Esto hay que decirlo con cuidado porque la primera lectura fue la equivocada. El
-único emisor de mensajes de tipo 0 de la imagen es `0x0813b160` (mensaje
-estático en `0x0813b21c`, `[msg+0x10] = 0`), al que se llega desde `0x0813b220`,
-que es el cuerpo de la tarea **`"ATAWorkLoopTask"`** (cadena en `0x0813b2bc`,
-creada en `0x0813b234` con prioridad 24). Parecía razonable pensar que con disco
-no se ejecutaba. **Es falso, y medirlo cuesta un minuto:** con `A.img` y sin
-disco las cuatro primeras paradas de `0x0813b160`, `0x0813b1ac` y `0x0813b1c0`
-son **idénticas registro a registro**. El mensaje se envía en los dos casos.
+This has to be said carefully because the first reading was the wrong one. The
+only sender of type-0 messages in the image is `0x0813b160` (static message at
+`0x0813b21c`, `[msg+0x10] = 0`), reached from `0x0813b220`, which is the body
+of the **`"ATAWorkLoopTask"`** task (string at `0x0813b2bc`, created at
+`0x0813b234` with priority 24). It seemed reasonable to think that with a disk
+it didn't run. **That's false, and measuring it takes a minute:** with `A.img`
+and without a disk, the first four stops at `0x0813b160`, `0x0813b1ac` and
+`0x0813b1c0` are **identical register for register**. The message is sent in
+both cases.
 
-Lo que cambia es el **receptor**. Antes de su primer `KS_receive(4)`, la tarea
-`0x0832878c` hace dos llamadas:
+What changes is the **receiver**. Before its first `KS_receive(4)`, task
+`0x0832878c` makes two calls:
 
 ```asm
 832878c: push {r4,r5,r6,lr}
 8328790: mov r0,#1
-8328794: bl 0x081c207c        ; coger el dispositivo 1     <- vuelve
+8328794: bl 0x081c207c        ; get device 1               <- returns
 8328798: mov r5,r0
-832879c: bl 0x08126638        ; <- CON DISCO NO VUELVE
-83287a0: mov r1,#0 ; mov r0,#4 ; bl 0x080159a0   ; recibir  <- nunca se llega
+832879c: bl 0x08126638        ; <- WITH A DISK IT DOES NOT RETURN
+83287a0: mov r1,#0 ; mov r0,#4 ; bl 0x080159a0   ; receive  <- never reached
 ```
 
-Medido en las dos configuraciones: sin disco las paradas llegan hasta
-`0x083287a0` y se repiten; con disco se paran en `0x0832879c` y ahí acaban.
+Measured in both configurations: without a disk the stops go as far as
+`0x083287a0` and repeat; with a disk they stop at `0x0832879c` and end there.
 
-Y de ahí hacia abajo, cada eslabón es otra parada real:
+And from there downward, each link is another real stop:
 
 ```
 0x08126638   lock([dev+0x10]) ; blx [[dev+4]+0x18] -> 0x0823d420
-0x0823d420     el sondeo de almacenamiento: reserva 4096 B, LBA 0
-0x0823d52c       bl 0x0827aad0                       <- CON DISCO NO VUELVE
-0x0827aad0         bl 0x0827a3f8 ; blx [r0+8]        <- vuelve (r0 = 0)
-0x0827ab10         bl 0x0827aa1c -> 0x0827a980       ; leer y clasificar LBA 0
-0x0827a9ac           blx r3 -> 0x080aea1c            <- AQUÍ SE PARA
-                       r0 = 0x8be5d3e0 (alias sin caché de 0x0be5d3e0),
-                       r2 = 1  -> "léeme UN bloque"
-0x080aea1c             blx [[0x08966004+4]+0 +0x0c]  ; el read del almacenamiento
+0x0823d420     the storage probe: allocates 4096 B, LBA 0
+0x0823d52c       bl 0x0827aad0                       <- WITH A DISK IT DOES NOT RETURN
+0x0827aad0         bl 0x0827a3f8 ; blx [r0+8]        <- returns (r0 = 0)
+0x0827ab10         bl 0x0827aa1c -> 0x0827a980       ; read and classify LBA 0
+0x0827a9ac           blx r3 -> 0x080aea1c            <- THIS IS WHERE IT STOPS
+                       r0 = 0x8be5d3e0 (uncached alias of 0x0be5d3e0),
+                       r2 = 1  -> "read me ONE block"
+0x080aea1c             blx [[0x08966004+4]+0 +0x0c]  ; the storage read
 ```
 
-`0x0827a980` es corto y lo dice todo: llama al read, y si vuelve con cero mira
-`buf+0x1FE` buscando `0xAA55` (→ `0x080aee04`, parser de MBR) y si no `buf+0`
-buscando `0x4552` `'ER'` (→ `0x080a38cc`, parser de Apple Partition Map). **Nunca
-llega a mirar.**
+`0x0827a980` is short and says it all: it calls the read, and if it returns
+zero it looks at `buf+0x1FE` for `0xAA55` (→ `0x080aee04`, MBR parser) and
+otherwise at `buf+0` for `0x4552` `'ER'` (→ `0x080a38cc`, Apple Partition Map
+parser). **It never gets to look.**
 
-Y lo que hace que esto sea un hallazgo y no un callejón: **la lectura sí
-ocurre**. `ATATRACE=1` enseña la orden `0xC8`, `ATA_TBUF_START = 0x0be5d3e0`,
-`ATA_TBUF_SIZE = 0x1000`, la transferencia, el huésped leyendo `ATA_IRQSTAT`,
-reconociéndola con un uno y parando el motor con `ATA_COMMAND = 2`. El disco
-entrega, la interrupción llega y el huésped la acusa — y aun así la llamada de
-lectura no vuelve. **El agujero está entre «el DMA terminó» y «despierta a quien
-lo pidió»**, no en el ATA.
+And what makes this a finding and not a dead end: **the read does happen**.
+`ATATRACE=1` shows the `0xC8` command, `ATA_TBUF_START = 0x0be5d3e0`,
+`ATA_TBUF_SIZE = 0x1000`, the transfer, the guest reading `ATA_IRQSTAT`,
+acknowledging it with a one and stopping the engine with `ATA_COMMAND = 2`. The
+disk delivers, the interrupt arrives and the guest acknowledges it — and even
+so the read call doesn't return. **The gap is between "the DMA finished" and
+"wake whoever asked for it"**, not in the ATA.
 
-Es el mismo punto con disco a ceros, con `A.img` (MBR de 512 bytes, partición de
-firmware real y FAT32 con `iPod_Control`) y con `E.img` (MBR en unidades de
-4096): las tres se paran ahí. El contenido del disco sigue sin importar, y ahora
-se sabe por qué: nadie llega a mirarlo.
+It is the same point with a zero-filled disk, with `A.img` (512-byte MBR, real
+firmware partition and FAT32 with `iPod_Control`) and with `E.img` (MBR in
+4096-byte units): all three stop there. The disk contents still don't matter,
+and now we know why: nobody gets to look at them.
 
-> **Matiz de auditoría, porque la frase original decía «trazas idénticas de 682
-> líneas» y eso es más de lo que se puede afirmar.** Repetido con `ATATRACE=1`
-> sobre una imagen a ceros y otra con MBR válido: **680 líneas cada una y una
-> sola diferencia**, `ATA_TBUF_START` (`+0x3c`), que sale `0x0be5d3c0` en una y
-> `0x0be5d3e0` en la otra. Y no es el contenido del disco: la misma imagen a
-> ceros da `0x0be5d3e0` en una carrera bajo `gdbpoke` y `0x0be5d3c0` en otra sin
-> depurador. Hay **variación de carrera a carrera** en dónde cae ese búfer, así
-> que «idénticas» hay que leerlo como «iguales salvo la dirección del búfer».
-> La conclusión no cambia; la palabra «idénticas» sí era demasiado fuerte.
+> **An audit nuance, because the original sentence said "identical 682-line
+> traces" and that's more than can be claimed.** Repeated with `ATATRACE=1` on
+> a zero-filled image and another with a valid MBR: **680 lines each and a
+> single difference**, `ATA_TBUF_START` (`+0x3c`), which comes out as
+> `0x0be5d3c0` in one and `0x0be5d3e0` in the other. And it isn't the disk
+> contents: the same zero-filled image gives `0x0be5d3e0` in one run under
+> `gdbpoke` and `0x0be5d3c0` in another without a debugger. There is
+> **run-to-run variation** in where that buffer lands, so "identical" has to be
+> read as "the same except for the buffer address". The conclusion doesn't
+> change; the word "identical" was too strong.
 
-### Lo que se arregló por el camino: GPIO pin 86
+### What got fixed along the way: GPIO pin 86
 
-Hay un segundo camino hacia la misma bandera y estaba roto por un bit.
-`0x08328720` es un bucle de sondeo que decide entre «montar» y «sin medio»:
+There is a second path to the same flag and it was broken by one bit.
+`0x08328720` is a polling loop that decides between "mount" and "no media":
 
 ```asm
-bl 0x08294d7c ; cmp r0,#0 ; bne sin_medio     (PMU 0x4b bit 2)   medido: 0
-bl 0x08295508 ; cmp r0,#0 ; bne sin_medio     (PMU 0x12/0x4b)    medido: 0
-bl 0x080a1474 ; cmp r0,#0 ; bne sin_medio     ([0x089120a1]!=100) medido: 0
-bl 0x080aeca4 ; cmp r0,#0 ; movne r1,#0       gpio_get_pin(86)   medido: 0  <-
-mov r0,#4 ; bl 0x080b2ce8                     ; anunciar {r1}
+bl 0x08294d7c ; cmp r0,#0 ; bne sin_medio     (PMU 0x4b bit 2)   measured: 0
+bl 0x08295508 ; cmp r0,#0 ; bne sin_medio     (PMU 0x12/0x4b)    measured: 0
+bl 0x080a1474 ; cmp r0,#0 ; bne sin_medio     ([0x089120a1]!=100) measured: 0
+bl 0x080aeca4 ; cmp r0,#0 ; movne r1,#0       gpio_get_pin(86)   measured: 0  <-
+mov r0,#4 ; bl 0x080b2ce8                     ; announce {r1}
 ```
 
-`0x080aeca4` es literalmente `gpio_get_pin(86)`, y `0x3CF00000` era
-`create_unimplemented_device`, o sea cero: el firmware concluía «no hay medio»
-aunque hubiera disco. Ahora hay un modelo de GPIO
-(`hw/arm/ipod_classic/ipod_classic_gpio.c`) y el pin 86 sigue a si hay `-drive`;
-medido después del cambio, `0x080aeca4` devuelve 1 y el mensaje pasa a ser de
-tipo 0. **Necesario y no suficiente**: `0x080b2ce8` despacha por
-`[[0x08911ad8]+0x10]`, y ese puntero sigue valiendo 0 a los 35 s, así que el
-anuncio se tira. Lo que el pin 86 arregla es real y estaba mal; lo que queda es
-otra cosa.
+`0x080aeca4` is literally `gpio_get_pin(86)`, and `0x3CF00000` was
+`create_unimplemented_device`, i.e. zero: the firmware concluded "no media"
+even when there was a disk. Now there is a GPIO model
+(`hw/arm/ipod_classic/ipod_classic_gpio.c`) and pin 86 follows whether there is a `-drive`;
+measured after the change, `0x080aeca4` returns 1 and the message becomes
+type 0. **Necessary and not sufficient**: `0x080b2ce8` dispatches via
+`[[0x08911ad8]+0x10]`, and that pointer is still 0 at 35 s, so the
+announcement is dropped. What pin 86 fixes is real and was wrong; what remains is
+something else.
 
-Qué es el pin 86 en la placa: `INDETERMINADO`. Qué hace en el firmware de Apple:
-verificado arriba.
+What pin 86 is on the board: `UNDETERMINED`. What it does in Apple's firmware:
+verified above.
 
-### El obstáculo concreto que queda
+### The concrete obstacle that remains
 
-> **RESUELTO, 10 de agosto de 2026 — ver §14, y con una corrección de fondo.**
-> El diagnóstico «el agujero está entre *el DMA terminó* y *despierta a quien lo
-> pidió*» señalaba el hueco correcto pero el periférico equivocado: **el ATA no
-> tiene nada que ver**, su ciclo se cierra entero y su semáforo despierta. Quien
-> no vuelve es un `memcpy` posterior por **DMAC0**, que dormía en un semáforo sin
-> *timeout* esperando una IRQ 16 que nadie generaba porque `0x38200000` era
-> `create_unimplemented_device`. Todo lo que sigue en esta sección describe
-> síntomas reales; la conclusión sobre el ATA, no.
+> **RESOLVED, August 10, 2026 — see §14, and with a fundamental correction.**
+> The diagnosis "the hole is between *the DMA finished* and *wake up whoever
+> requested it*" pointed at the right gap but the wrong peripheral: **the ATA has
+> nothing to do with it**, its cycle closes completely and its semaphore wakes. What
+> does not return is a later `memcpy` via **DMAC0**, which slept on a semaphore with no
+> *timeout* waiting for an IRQ 16 that nobody generated because `0x38200000` was
+> `create_unimplemented_device`. Everything that follows in this section describes
+> real symptoms; the conclusion about the ATA does not.
 
-> **Con disco, la lectura de un bloque de LBA 0 (`0x080aea1c`, llamada desde
-> `0x0827a9ac`) no vuelve nunca, aunque el DMA de ATA se completa y el huésped
-> acusa la interrupción.** Todo lo demás está comprobado y funciona: el ATA
-> entrega los bytes, los proveedores de recursos están montados, el contenedor
-> empotrado está en RAM, el panel dibuja lo que se le mande y la ventana se fija
-> bien.
+> **With a disk, the read of a block from LBA 0 (`0x080aea1c`, called from
+> `0x0827a9ac`) never returns, even though the ATA DMA completes and the guest
+> acknowledges the interrupt.** Everything else is checked and works: the ATA
+> delivers the bytes, the resource providers are mounted, the embedded
+> container is in RAM, the panel draws whatever it is sent and the window is set
+> correctly.
 
-Lo que se sabe del ATA en ese momento (`ATATRACE=1`, disco a ceros, `A.img` y
-`E.img`: **las tres trazas son idénticas, 682 líneas**):
+What is known about the ATA at that point (`ATATRACE=1`, zeroed disk, `A.img` and
+`E.img`: **the three traces are identical, 682 lines**):
 
-- La orden `0xEC` (IDENTIFY) se completa.
-- Dos lecturas por DMA, las dos en LBA 0: `0x1000` bytes a `0x0be5d3e0` y
-  `0x8000` bytes a `0x0be55320` — que son justo el búfer de 4096 de
-  `0x0823d420` y su segunda pasada.
-- Después el driver cierra limpiamente (`ATA_CFG = 0x640`, lee `+0x70`/`+0x7c`)
-  y **no vuelve a hablar**. No está girando sobre ningún registro: el bloqueo
-  está por encima del driver.
-- Sin disco la traza acaba en `WR +0x70 = 0xec` sin respuesta. El IDENTIFY falla,
-  `0x0823d420` sale por su rama temprana (`0x0823d44c`) sin llegar nunca a
-  `0x0827aad0`, y por eso el camino sin disco no se bloquea: **se bloquea el que
-  encuentra un disco, no el que no lo encuentra.**
+- Command `0xEC` (IDENTIFY) completes.
+- Two DMA reads, both at LBA 0: `0x1000` bytes to `0x0be5d3e0` and
+  `0x8000` bytes to `0x0be55320` — which are exactly the 4096 buffer of
+  `0x0823d420` and its second pass.
+- Then the driver closes cleanly (`ATA_CFG = 0x640`, reads `+0x70`/`+0x7c`)
+  and **never speaks again**. It is not spinning on any register: the hang
+  is above the driver.
+- Without a disk the trace ends at `WR +0x70 = 0xec` with no response. The IDENTIFY fails,
+  `0x0823d420` exits via its early branch (`0x0823d44c`) without ever reaching
+  `0x0827aad0`, and that is why the no-disk path does not hang: **the one that
+  finds a disk hangs, not the one that doesn't.**
 
-Lo primero que hay que hacer mañana es entrar en `0x080aea1c` con `gdbpoke.py`
-—`blx [[0x08966004+4]+0 +0x0c]`, dos o tres niveles más— y averiguar en qué
-objeto del kernel se queda dormida la petición. La sospecha, `INFERIDO`: la
-notificación de fin de transferencia no llega a la tarea que la espera. Dos
-cosas que descartar primero, las dos baratas: que la línea de interrupción del
-ATA (`S5L8702_ATA_IRQ`) esté en el VIC que el firmware ha desenmascarado, y que
-`0x0823d420` no esté esperando además una segunda interrupción del bloque de
-ATA que el modelo no genera (el modelo sólo levanta `ATA_IRQSTAT` bit 0, desde
-INTRQ del núcleo IDE; qué hacen los demás bits es `INDETERMINADO`).
+The first thing to do tomorrow is to step into `0x080aea1c` with `gdbpoke.py`
+—`blx [[0x08966004+4]+0 +0x0c]`, two or three more levels— and find out on which
+kernel object the request falls asleep. The suspicion, `INFERRED`: the
+end-of-transfer notification does not reach the task waiting for it. Two
+things to rule out first, both cheap: that the ATA interrupt line
+(`S5L8702_ATA_IRQ`) is on the VIC the firmware has unmasked, and that
+`0x0823d420` is not also waiting for a second interrupt from the ATA
+block that the model does not generate (the model only raises `ATA_IRQSTAT` bit 0, from
+the IDE core's INTRQ; what the other bits do is `UNDETERMINED`).
 
-`INFERIDO`, y hay que comprobarlo antes de creérselo: si eso se destraba, se
-monta un volumen; si el volumen es la partición `rsrc` del `.ipsw`, aparece
-`\Resources\Fonts\Helvetica.ttf`; con eso `0x082393ec` deja de devolver `{0,0}`
-y la composición de la interfaz puede terminar. Sólo entonces se sabrá de dónde
-lee el motor de trama de `+0x70`, que es la última incógnita del camino a
-píxeles.
+`INFERRED`, and it has to be checked before believing it: if that gets unblocked, a
+volume is mounted; if the volume is the `.ipsw`'s `rsrc` partition,
+`\Resources\Fonts\Helvetica.ttf` appears; with that, `0x082393ec` stops returning `{0,0}`
+and the interface composition can finish. Only then will we know where
+the `+0x70` frame engine reads from, which is the last unknown on the path to
+pixels.
 
 ---
 
-## 7. Cómo reproducirlo
+## 7. How to reproduce it
 
 ```bash
 wsl -d Ubuntu-24.04 -e bash -c "cd /mnt/c/Desarrollo/qemu-ios/build && ninja qemu-system-arm"
 cd build
 
-# Sin disco: el ciclo de caída. Mirar STDERR, que es donde habla el firmware.
+# Without a disk: the crash cycle. Look at STDERR, which is where the firmware talks.
 ./qemu-system-arm -M iPod-Classic -kernel ../assets/classic6g/osos_decrypted.bin \
     -display none -monitor none -serial null
 
-# Con disco: arranque limpio hasta el bucle idle.
+# With a disk: clean boot to the idle loop.
 dd if=/dev/zero of=/tmp/ipod.img bs=1M count=64
 ./qemu-system-arm -M iPod-Classic -kernel ../assets/classic6g/osos_decrypted.bin \
     -display none -monitor none -serial null \
     -drive if=ide,format=raw,file=/tmp/ipod.img
 
-# Qué periféricos pide y cuáles no están.
+# Which peripherals it asks for and which are missing.
 ... -d unimp,guest_errors -D /tmp/u.log
 
-# Toda la conversación con el ATA, que es como se sacó el protocolo del §5.
+# The whole conversation with the ATA, which is how the protocol in §5 was extracted.
 ATATRACE=1 ... 2>/tmp/ata.txt
 
-# Dónde está parado.
+# Where it is stopped.
 (sleep 25; printf 'info registers\n'; sleep 2; printf 'quit\n') | \
     ./qemu-system-arm ... -monitor stdio
 ```
 
-Para saber si un trozo de código llegó a ejecutarse — la pregunta más útil de
-toda la sesión — `-d in_asm` y buscar su dirección:
+To find out whether a piece of code ever got executed — the most useful question of
+the whole session — `-d in_asm` and search for its address:
 
 ```bash
 ./qemu-system-arm ... -d in_asm -D /tmp/asm.log
-grep -c '^0x0805712c' /tmp/asm.log     # 0 = ningún bloque empezó ahí
+grep -c '^0x0805712c' /tmp/asm.log     # 0 = no block started there
 ```
 
-> **Y aquí está la trampa, que costó una medida falsa.** En esta compilación
-> `-d in_asm` no desensambla (no hay capstone): imprime **una sola línea de
-> dirección por bloque de traducción**, la del principio, seguida de
-> `OBJD-T: <bytes>`. Comprobado: `0x22003b1c` — el `wfi` del bucle idle, que se
-> ejecuta miles de veces — sale **cero** veces, porque su bloque empieza en
+> **And here is the trap, which cost a false measurement.** In this build
+> `-d in_asm` does not disassemble (there is no capstone): it prints **a single address
+> line per translation block**, the one at the start, followed by
+> `OBJD-T: <bytes>`. Verified: `0x22003b1c` — the idle loop's `wfi`, which is
+> executed thousands of times — shows up **zero** times, because its block starts at
 > `0x22003b0c`.
 >
-> Luego `grep -c '^0xDIRECCION'` sólo responde «¿corrió esto?» si la dirección
-> es **entrada de bloque**: destino de un `bl`/`b`, o el `push` con el que
-> empieza una función. Para cualquier otra da cero siempre y no significa nada.
-> Antes de usarlo, desensambla la dirección y comprueba que hay un prólogo.
+> So `grep -c '^0xDIRECCION'` only answers "did this run?" if the address
+> is a **block entry**: the target of a `bl`/`b`, or the `push` a function
+> starts with. For any other it always gives zero and means nothing.
+> Before using it, disassemble the address and check that there is a prologue.
 
 ---
 
-## 8. Lo que se aprendió del método
+## 8. What was learned about the method
 
-- **`-d cpu` no sirve aquí.** Genera 2 GB y 45 millones de líneas en 25 s y ni
-  siquiera llega al primer fallo. Para localizar una excepción, `-d int,in_asm`
-  interleaved: el bloque de traducción que se imprime justo antes de
-  `Taking exception` es el que la provoca.
-- **`grep -c '^0xDIRECCION'` sobre un log de `in_asm`** responde "¿esto llegó a
-  correr?" en un segundo, y esa pregunta reordenó toda la investigación: sin
-  ella habríamos seguido arreglando el parser de la partición de firmware, que
-  nunca se ejecuta. **Pero sólo vale para entradas de bloque** — ver el aviso
-  del §7. La primera versión de esta página lo aplicó a una dirección de en
-  medio de una función y sacó un cero que no significaba nada; dio la casualidad
-  de que la conclusión era correcta por otro camino. Es exactamente el error de
-  método que avisa [09-historia-5g.md](09-historia-5g.md): comprobar la
-  herramienta antes de creerse la medida.
-- **Un puntero nulo no siempre falla.** En esta máquina VA 0 está mapeado por
-  el propio firmware, así que `ldr r1,[r0]` con `r0 = 0` devuelve una palabra
-  de la tabla de vectores y la caída ocurre más tarde y en otro sitio. `DFAR`
-  con pinta de instrucción ARM (`0xEAxxxxxx`) es la pista.
-- **Contar es necesario, pero no basta.** "Una palabra de píxel en 45 s" es un
-  hecho; "luego el framebuffer va por DMA" era una inferencia con al menos otra
-  explicación igual de buena (que el firmware se cae antes de empujar píxeles),
-  y se coló como si fuese medida. Cuando una cuenta sale casi cero, la primera
-  hipótesis a descartar es "no llegó a intentarlo". (Resuelto: eran cero
-  píxeles y ocho parámetros de orden; ver §3.)
+- **`-d cpu` is useless here.** It generates 2 GB and 45 million lines in 25 s and doesn't
+  even reach the first fault. To locate an exception, `-d int,in_asm`
+  interleaved: the translation block printed right before
+  `Taking exception` is the one that causes it.
+- **`grep -c '^0xDIRECCION'` on an `in_asm` log** answers "did this ever
+  run?" in a second, and that question reordered the entire investigation: without
+  it we would have kept fixing the firmware partition parser, which
+  never executes. **But it only works for block entries** — see the warning
+  in §7. The first version of this page applied it to an address in the
+  middle of a function and got a zero that meant nothing; as it happened,
+  the conclusion was correct by another route. It is exactly the method error
+  that [09-history-5g.md](09-history-5g.md) warns about: check the
+  tool before believing the measurement.
+- **A null pointer does not always fault.** On this machine VA 0 is mapped by
+  the firmware itself, so `ldr r1,[r0]` with `r0 = 0` returns a word
+  from the vector table and the crash happens later and somewhere else. A `DFAR`
+  that looks like an ARM instruction (`0xEAxxxxxx`) is the clue.
+- **Counting is necessary, but not enough.** "One pixel word in 45 s" is a
+  fact; "so the framebuffer goes via DMA" was an inference with at least one other
+  equally good explanation (that the firmware crashes before pushing pixels),
+  and it slipped in as if it were a measurement. When a count comes out almost zero, the first
+  hypothesis to rule out is "it never got to try". (Resolved: it was zero
+  pixels and eight command parameters; see §3.)
 
 ---
 
-## 10. `gdbpoke.py`, y por qué cambia el ritmo de trabajo
+## 10. `gdbpoke.py`, and why it changes the pace of work
 
-`-d in_asm` sólo responde «¿se tradujo un bloque que empieza aquí?». La pregunta
-que hacía falta era «¿qué hay en `r0` cuando el huésped llega a esta dirección?»,
-y para eso hace falta un depurador. Esta WSL no tiene `gdb-multiarch`, así que
-hay uno nuevo de 200 líneas que habla el protocolo remoto de GDB directamente
-contra el `-gdb tcp::PORT` de QEMU:
+`-d in_asm` only answers "was a block starting here translated?". The question
+that was needed was "what is in `r0` when the guest reaches this address?",
+and for that a debugger is needed. This WSL doesn't have `gdb-multiarch`, so
+there is a new 200-line one that speaks the GDB remote protocol directly
+to QEMU's `-gdb tcp::PORT`:
 
 ```bash
 sh tools/ipod_classic/gdbrun.sh 1300 $HOME/6g/z64.img 90 \
    --break 0x0815b1e0 --break 0x0815b230 --hits 6 --mem 0x0bede7a4:16
 ```
 
-`gdbrun.sh` arranca QEMU con `-S -gdb`, espera y lanza `gdbpoke.py`.
-`QEMU_EXTRA` añade argumentos (`-d int -D ...`). Todo el §9 y la corrección del
-§4 salen de esta herramienta; sin ella habrían sido días de `-d in_asm`.
+`gdbrun.sh` starts QEMU with `-S -gdb`, waits and launches `gdbpoke.py`.
+`QEMU_EXTRA` adds arguments (`-d int -D ...`). All of §9 and the correction to
+§4 come from this tool; without it they would have been days of `-d in_asm`.
 
-Además de `--break`/`--mem`/`--step` tiene `--skip FROM=TO[:R0]`, que reescribe
-el PC en una parada: sirve para **saltarse una llamada sin tocar la imagen del
-huésped**, que es como se demostró que esquivar el fallo de `0x0815b230` no
-lleva a ninguna parte (§4).
+Besides `--break`/`--mem`/`--step` it has `--skip FROM=TO[:R0]`, which rewrites
+the PC at a stop: it serves to **skip a call without touching the guest
+image**, which is how it was shown that dodging the failure at `0x0815b230` doesn't
+lead anywhere (§4).
 
-> **Trampa que costó una hora y que hay que conocer.** QEMU **no** tiene lógica
-> de «ignora el breakpoint del que acabo de salir»:
-> `accel/tcg/cpu-exec.c:346` dispara siempre que `pc == bp->pc`. Un `c` pelado
-> desde una parada vuelve a parar en el mismo sitio **para siempre**, y la
-> primera versión de la herramienta sacó ocho paradas idénticas de una función
-> con 374 llamadores sin que saltara ninguna alarma. La salida está tres líneas
-> más arriba en el mismo fichero: *«Singlestep overrides breakpoints»*. `cont()`
-> hace `s` y luego `c`.
+> **A trap that cost an hour and that you need to know about.** QEMU does **not** have
+> "ignore the breakpoint I just left" logic:
+> `accel/tcg/cpu-exec.c:346` always fires when `pc == bp->pc`. A bare `c`
+> from a stop stops again at the same place **forever**, and the
+> first version of the tool got eight identical stops from a function
+> with 374 callers without any alarm going off. The way out is three lines
+> above in the same file: *"Singlestep overrides breakpoints"*. `cont()`
+> does `s` and then `c`.
 >
-> Y el caso de control que lo destapó: poner el breakpoint en una función con
-> muchos llamadores y mirar si `lr` cambia entre paradas. Si no cambia, la
-> herramienta está rota, no el firmware.
+> And the control case that uncovered it: put the breakpoint on a function with
+> many callers and check whether `lr` changes between stops. If it doesn't, the
+> tool is broken, not the firmware.
 
-Segunda trampa, de direcciones: **los breakpoints son sobre direcciones
-virtuales**. El firmware mapea VA 0 sobre IRAM0, así que la tabla de vectores se
-ejecuta en `0x00000000`, no en `0x22000000`, y el manejador de Data Abort está
-en **`0x00003400`** (`[0x22000010] = 0xEA000CFA`). Poner el breakpoint en
-`0x22003400` no dispara nunca.
+Second trap, about addresses: **breakpoints are on virtual
+addresses**. The firmware maps VA 0 onto IRAM0, so the vector table
+executes at `0x00000000`, not at `0x22000000`, and the Data Abort handler is
+at **`0x00003400`** (`[0x22000010] = 0xEA000CFA`). Putting the breakpoint at
+`0x22003400` never fires.
 
-## 12. Auditoría independiente (agosto de 2026, antes de que hubiera imagen)
+## 12. Independent audit (August 2026, before there was an image)
 
-> Esta auditoría es **anterior** al §13/§14: sus filas «el retailOS da 0
-> píxeles» y «el bloqueo con disco está en `0x080aea1c`» describen el estado de
-> entonces. La tercera auditoría, que sí ve imagen, está en el §16.
+> This audit **predates** §13/§14: its rows "the retailOS gives 0
+> pixels" and "the hang with a disk is at `0x080aea1c`" describe the state at
+> that time. The third audit, which does see an image, is in §16.
 
-Todo lo de arriba se volvió a medir desde cero. Lo que **se confirma**:
+Everything above was measured again from scratch. What **is confirmed**:
 
-| Afirmación | Cómo se comprobó |
+| Claim | How it was checked |
 |---|---|
-| El panel dibuja | `lcdtest.S` → `screendump` → 76 800/76 800 píxeles, 1920 colores, y **mirando la imagen**: una rampa roja en X y verde en Y con el corte en x=256 que el `and #0x1f` del test predice |
-| El retailOS da 0 píxeles, con disco y sin él | `screendump` + `pixcount.py` en las dos configuraciones |
-| Con disco no hay ninguna excepción escondida | 40 s de `-d int` = 33 838 `Taking exception 5 [IRQ]` y nada más; `R15 = 0x22003b20`, SVC |
-| Sin disco, ciclo de caída | 28 `CPU_exception_handler` + 28 `SWRCON` en 25 s de stderr |
-| Cero píxeles por el puerto de datos | `LCDTRACE=1`: 29 arranques × (3 CMD + 8 parámetros), `0 were pixels` |
-| …y **no** es un artefacto del modelo | `-d guest_errors` no da **ni un** «Invalid access»: no hay escrituras de 8/16 bits al LCD que el filtro de `valid.min_access_size = 4` esté tirando |
-| El bloqueo con disco está en `0x080aea1c` | `gdbpoke.py`, dos *breakpoints*: `0x0827a9ac` para una vez (`r0=0x8be5d3e0`, `r2=1`, `r3=0x080aea1c`, `lr=0x0827a994`), `0x080aea1c` para una vez (`lr=0x0827a9b0`) y en 120 s no vuelve a parar ninguno |
-| Nadie llega a mirar el sector | `-d in_asm` con disco: `0x080aee04` (parser de MBR) y `0x080a38cc` (parser de APM) = **0** bloques |
-| `0x0805712c`, `0x0815b1b8`, `0x08239658` no se ejecutan con disco | `-d in_asm`, y las cuatro direcciones verificadas como prólogos (`e92d….` = `push`) antes de creerse el cero |
-| GPIO pin 86 | `0x08325584` desensamblado: `[GPIO_BASE + ((pin>>3)<<5) + 4] >> (pin&7)`, y `0x080aeca4` es `mov r0,#86; bl 0x8325584`. `GPIOTRACE=1` con disco: `rd +0x144 -> 0x40`, o sea pin 86 = 1 |
-| `"Resources/Fonts"` en `0x08380628` | leído del fichero |
-| `aupd_decrypted.bin` no toca el LCD | `LCDTRACE=1`: cero accesos |
-| Sin regresión en el 5G | `navtest.sh`: 76 548 px en los 7 fotogramas, el resaltado se mueve (12 312, 12 114, 31 632) |
+| The panel draws | `lcdtest.S` → `screendump` → 76 800/76 800 pixels, 1920 colors, and **looking at the image**: a red ramp in X and green in Y with the cut at x=256 that the test's `and #0x1f` predicts |
+| The retailOS gives 0 pixels, with and without a disk | `screendump` + `pixcount.py` in both configurations |
+| With a disk there is no hidden exception | 40 s of `-d int` = 33 838 `Taking exception 5 [IRQ]` and nothing else; `R15 = 0x22003b20`, SVC |
+| Without a disk, crash cycle | 28 `CPU_exception_handler` + 28 `SWRCON` in 25 s of stderr |
+| Zero pixels through the data port | `LCDTRACE=1`: 29 starts × (3 CMD + 8 parameters), `0 were pixels` |
+| …and it is **not** a model artifact | `-d guest_errors` gives **not one** "Invalid access": there are no 8/16-bit writes to the LCD that the `valid.min_access_size = 4` filter is dropping |
+| The hang with a disk is at `0x080aea1c` | `gdbpoke.py`, two *breakpoints*: `0x0827a9ac` stops once (`r0=0x8be5d3e0`, `r2=1`, `r3=0x080aea1c`, `lr=0x0827a994`), `0x080aea1c` stops once (`lr=0x0827a9b0`) and in 120 s neither stops again |
+| Nobody gets to look at the sector | `-d in_asm` with a disk: `0x080aee04` (MBR parser) and `0x080a38cc` (APM parser) = **0** blocks |
+| `0x0805712c`, `0x0815b1b8`, `0x08239658` do not execute with a disk | `-d in_asm`, and the four addresses verified as prologues (`e92d….` = `push`) before believing the zero |
+| GPIO pin 86 | `0x08325584` disassembled: `[GPIO_BASE + ((pin>>3)<<5) + 4] >> (pin&7)`, and `0x080aeca4` is `mov r0,#86; bl 0x8325584`. `GPIOTRACE=1` with a disk: `rd +0x144 -> 0x40`, i.e. pin 86 = 1 |
+| `"Resources/Fonts"` at `0x08380628` | read from the file |
+| `aupd_decrypted.bin` does not touch the LCD | `LCDTRACE=1`: zero accesses |
+| No regression on the 5G | `navtest.sh`: 76 548 px in the 7 frames, the highlight moves (12 312, 12 114, 31 632) |
 
-Lo que **se corrige**:
+What **is corrected**:
 
-1. «Con disco sólo toca el bloque de LCD dos veces» → son **cinco escrituras**
+1. "With a disk it only touches the LCD block twice" → it is **five writes**
    (§6).
-2. «Las tres imágenes dan trazas de ATA idénticas de 682 líneas» → 680 líneas y
-   una diferencia, y la diferencia es ruido de carrera, no del disco (§9).
-3. La cabecera de `ipod_classic_gpio.h` decía que el pin 86 era «toda la razón»
-   por la que un arranque con disco no dibujaba. **No lo es**, y la propia §9 ya
-   lo decía: el anuncio se tira después en `0x080b2ce8` porque `[0x08911ad8]`
-   sigue a cero (verificado a los 45 s con `xp /1wx`). Corregido en la cabecera.
-4. `0x38900000` estaba dado por descartado con la prueba «ningún registro recibe
-   una dirección de DRAM». Es el bloque con la tabla de gamma identidad y la
-   geometría del panel: **el mejor candidato que hay** para el origen del motor
-   de trama. Retirado el descarte y escrito en §3.
-5. La afirmación «de dónde lee el motor de `+0x70` es indeterminado» era
-   correcta pero se paró demasiado pronto: `0x08127f14` estaba a ocho
-   instrucciones de las dos que sí se documentaron, y enseña que el objeto de
-   dibujado **no es nulo** y que la llamada de dibujado **sí ocurre** (§3).
+2. "The three images give identical 682-line ATA traces" → 680 lines and
+   one difference, and the difference is race noise, not from the disk (§9).
+3. The header of `ipod_classic_gpio.h` said that pin 86 was "the whole reason"
+   a boot with a disk did not draw. **It is not**, and §9 itself already
+   said so: the announcement is dropped later at `0x080b2ce8` because `[0x08911ad8]`
+   is still zero (verified at 45 s with `xp /1wx`). Corrected in the header.
+4. `0x38900000` had been dismissed with the test "no register receives
+   a DRAM address". It is the block with the identity gamma table and the
+   panel geometry: **the best candidate there is** for the frame engine's
+   source. Dismissal withdrawn and written up in §3.
+5. The claim "where the `+0x70` engine reads from is undetermined" was
+   correct but stopped too early: `0x08127f14` was eight
+   instructions away from the two that were documented, and it shows that the drawing
+   object **is not null** and that the drawing call **does happen** (§3).
 
-## 11. Ficheros de esta tanda
+## 11. Files from this batch
 
-| Ruta | Qué es |
+| Path | What it is |
 |---|---|
-| `tools/ipod_classic/findlit.py` | dónde está un literal de 32 bits en la imagen, en VA, y qué `ldr rX,[pc,#imm]` lo cargan |
-| `tools/ipod_classic/audit_run.sh` | arranca el retailOS, hace `screendump` y resume stderr |
-| `tools/ipod_classic/audit_peek.sh` | arranca, espera y lee palabras de memoria física por el monitor |
-| `hw/arm/ipod_classic/ipod_classic_lcd.c` | ahora con panel: memoria 320×240 RGB565, ventana, `0x2A/0x2B/0x2C`, `qemu_console`, y los registros `+0x70..+0x8C` del motor de trama |
-| `hw/arm/ipod_classic/ipod_classic_gpio.c` | GPIO. Un solo pin modelado, el 86, y la razón está en la cabecera |
-| `tools/ipod_classic/gdbpoke.py` | cliente del protocolo remoto de GDB: breakpoints, registros, memoria, saltos |
-| `tools/ipod_classic/gdbrun.sh` | arranca QEMU con `-S -gdb` y lo conduce |
-| `tools/ipod_classic/lcdtest.S` | caso de control del panel: dibuja una rampa de 320×240 |
-| `tools/ipod_classic/pixcount.py` | cuenta píxeles no negros de un `screendump` |
+| `tools/ipod_classic/findlit.py` | where a 32-bit literal is in the image, in VA, and which `ldr rX,[pc,#imm]` load it |
+| `tools/ipod_classic/audit_run.sh` | boots the retailOS, does a `screendump` and summarizes stderr |
+| `tools/ipod_classic/audit_peek.sh` | boots, waits and reads physical memory words via the monitor |
+| `hw/arm/ipod_classic/ipod_classic_lcd.c` | now with a panel: 320×240 RGB565 memory, window, `0x2A/0x2B/0x2C`, `qemu_console`, and the frame engine registers `+0x70..+0x8C` |
+| `hw/arm/ipod_classic/ipod_classic_gpio.c` | GPIO. A single pin modeled, 86, and the reason is in the header |
+| `tools/ipod_classic/gdbpoke.py` | GDB remote protocol client: breakpoints, registers, memory, jumps |
+| `tools/ipod_classic/gdbrun.sh` | starts QEMU with `-S -gdb` and drives it |
+| `tools/ipod_classic/lcdtest.S` | panel control case: draws a 320×240 ramp |
+| `tools/ipod_classic/pixcount.py` | counts non-black pixels in a `screendump` |
 
-### De la tanda del 10 de agosto (§13, §14)
+### From the August 10 batch (§13, §14)
 
-| Ruta | Qué es |
+| Path | What it is |
 |---|---|
-| `hw/arm/ipod_classic/ipod_classic_disp.c` | el compositor de `0x38900000`: registros con lectura honesta, los cinco descriptores de capa y la composición sobre el panel |
-| `include/hw/arm/ipod_classic/ipod_classic_disp.h` | el mapa de registros entero, con la procedencia de cada línea marcada (V) verificado en el desensamblado, (M) además medido, (U) indeterminado |
-| `tools/ipod_classic/ppm2png.py` | convierte un `screendump` a PNG **para mirarlo**, y también lee framebuffers crudos sacados con `pmemsave` (`--raw 320x240:argb8888`) |
-| `hw/arm/ipod_classic/ipod_classic.c` | DMAC0 y DMAC1 pasan a ser `TYPE_PL080` con IRQ 16/17 y la memoria del sistema como puerto maestro |
+| `hw/arm/ipod_classic/ipod_classic_disp.c` | the compositor at `0x38900000`: registers with honest readback, the five layer descriptors and the composition onto the panel |
+| `include/hw/arm/ipod_classic/ipod_classic_disp.h` | the entire register map, with the provenance of each line marked (V) verified in the disassembly, (M) also measured, (U) undetermined |
+| `tools/ipod_classic/ppm2png.py` | converts a `screendump` to PNG **to look at it**, and also reads raw framebuffers pulled with `pmemsave` (`--raw 320x240:argb8888`) |
+| `hw/arm/ipod_classic/ipod_classic.c` | DMAC0 and DMAC1 become `TYPE_PL080` with IRQ 16/17 and system memory as the master port |
 
-### De la tanda del §18
+### From the §18 batch
 
-| Ruta | Qué es |
+| Path | What it is |
 |---|---|
-| `tools/ipod_classic/uirules.py` | lee la **tabla de reglas de la interfaz** —(disparador, manejador, acciones)— del binario de Apple, con el formato documentado en su cabecera. Es lo que convierte «¿MENU hace algo en esta pantalla?» en una consulta |
-| `tools/ipod_classic/evtrace.py` | arranca QEMU con monitor **y** gdbstub, deja que arranque suelto, engancha, arma los puntos de ruptura y **entonces** pulsa la tecla desde un hilo. `--str rN` sigue un puntero y enseña la cadena que hay al final |
-| `tools/ipod_classic/tests/timer_audit.c` | prueba desnuda del bloque de temporizadores: mide tres contadores libres contra `USEC_TIMER` y aísla qué escrituras reinician la cuenta |
+| `tools/ipod_classic/uirules.py` | reads the **interface rule table** —(trigger, handler, actions)— from Apple's binary, with the format documented in its header. It is what turns "does MENU do anything on this screen?" into a query |
+| `tools/ipod_classic/evtrace.py` | starts QEMU with a monitor **and** gdbstub, lets it boot freely, attaches, arms the breakpoints and **then** presses the key from a thread. `--str rN` follows a pointer and shows the string at the end |
+| `tools/ipod_classic/tests/timer_audit.c` | bare-metal test of the timer block: measures three free-running counters against `USEC_TIMER` and isolates which writes reset the count |
 
 ---
 
-## 13. `0x38900000` es el compositor, y de ahí salen los píxeles
+## 13. `0x38900000` is the compositor, and that is where the pixels come from
 
-El §3 lo dejó como «el mejor candidato». Lo era. Es el bloque que compone el
-cuadro a partir de capas en DRAM, y el motor de trama del LCD (`+0x70`) sólo lo
-presenta.
+§3 left it as "the best candidate". It was. It is the block that composes the
+frame from layers in DRAM, and the LCD frame engine (`+0x70`) only
+presents it.
 
-### Cómo se pasó de «793 direcciones» a un mapa de registros
+### How we went from "793 addresses" to a register map
 
-Con el bloque cayendo al *io floor* sólo se veía **qué** direcciones recibían
-escrituras. Dos pasos lo abrieron:
+With the block falling to the *io floor*, all you could see was **which** addresses received
+writes. Two steps opened it up:
 
-1. **Los veintisiete `ldr rX,=0x38900000`.** Un escaneo de todos los `LDR`
-   relativos a PC de la imagen cuyo literal cae en `0x389xxxxx` da 27 sitios
-   para `0x38900000` más cinco bases desplazadas —`0x389000f0`, `0x38900180`,
-   `0x3890031c`, `0x38900364`, `0x38900400`—, y desensamblando esos 27 sale casi
-   todo el mapa. La lista es **completa**, no «lo que apareció».
-2. **La traza con el PC del huésped.** `DISPTRACE=1` imprime cada acceso con
-   `pc~`, y eso encontró lo que el paso 1 no podía: `+0x200..+0x214` se escriben
-   desde `0x081273f8..0x08127428`, que llega al bloque por `r6` y no por un
-   literal propio. Los dos métodos se necesitan.
+1. **The twenty-seven `ldr rX,=0x38900000`.** A scan of all the PC-relative `LDR`s
+   in the image whose literal falls in `0x389xxxxx` gives 27 sites
+   for `0x38900000` plus five offset bases —`0x389000f0`, `0x38900180`,
+   `0x3890031c`, `0x38900364`, `0x38900400`—, and disassembling those 27 yields almost
+   the entire map. The list is **complete**, not "what showed up".
+2. **The trace with the guest's PC.** `DISPTRACE=1` prints each access with
+   `pc~`, and that found what step 1 could not: `+0x200..+0x214` are written
+   from `0x081273f8..0x08127428`, which reaches the block via `r6` and not via a
+   literal of its own. Both methods are needed.
 
-### El mapa, con la evidencia de cada línea
+### The map, with the evidence for each line
 
-Todo está en `include/hw/arm/ipod_classic/ipod_classic_disp.h`, registro a
-registro. Lo que importa aquí:
+Everything is in `include/hw/arm/ipod_classic/ipod_classic_disp.h`, register by
+register. What matters here:
 
-| Registro | Qué es | Cómo se sabe |
+| Register | What it is | How we know |
 |---|---|---|
-| `+0x008` | registro de control, seis campos de bits | seis funciones distintas hacen lectura-modificación-escritura sobre él |
-| `+0x058 + k*0x18` | **los cinco descriptores de capa**, k = 0..4 | `0x08126ffc..0x0812716c`, un `switch` de cinco ramas que escribe los mismos seis registros |
-| `+0x0d8/+0xe0/+0xe8` | tres configuraciones de capa | `0x080b0140` las construye como `(fmt<<28)\|(a<<16)\|(b<<12)\|c` |
-| `+0x214` | `0x013f00ef` = 319 y 239, **la geometría del panel** | literal en `0x08127468` |
-| `+0x3ac` | `(w<<20)\|(h<<8)\|…`, bit 0 = rotado | `0x080bcef8`, y `0x08127f54` lo llama con `(64,64,0,0,0)` → `0x04004000`, que es exactamente lo que escribe el arranque |
-| `+0x400..+0xffc` | tres tablas de gamma de 256 entradas | `0x08127268` construye `tbl[i] = i*4` y `0x0806fe9c` la escribe |
+| `+0x008` | control register, six bitfields | six different functions read-modify-write it |
+| `+0x058 + k*0x18` | **the five layer descriptors**, k = 0..4 | `0x08126ffc..0x0812716c`, a five-way `switch` that writes the same six registers |
+| `+0x0d8/+0xe0/+0xe8` | three layer configurations | `0x080b0140` builds them as `(fmt<<28)\|(a<<16)\|(b<<12)\|c` |
+| `+0x214` | `0x013f00ef` = 319 and 239, **the panel geometry** | literal at `0x08127468` |
+| `+0x3ac` | `(w<<20)\|(h<<8)\|…`, bit 0 = rotated | `0x080bcef8`, and `0x08127f54` calls it with `(64,64,0,0,0)` → `0x04004000`, which is exactly what the boot writes |
+| `+0x400..+0xffc` | three 256-entry gamma tables | `0x08127268` builds `tbl[i] = i*4` and `0x0806fe9c` writes it |
 
-El descriptor de capa, que es lo que dibuja:
+The layer descriptor, which is what draws:
 
 ```
-+0x00  stride de origen en bytes
-+0x04  (align<<24) | (fmt<<8) | ...   bit 16 puesto si NO es de 32 bpp
-+0x08  DIRECCION DE ORIGEN, ya avanzada al primer píxel visible
-+0x0c  (W<<16) | H     tamaño de destino
-+0x10  W * bytes_por_pixel / 4
-+0x14  (X<<16) | Y     posición de destino
++0x00  source stride in bytes
++0x04  (align<<24) | (fmt<<8) | ...   bit 16 set if NOT 32 bpp
++0x08  SOURCE ADDRESS, already advanced to the first visible pixel
++0x0c  (W<<16) | H     destination size
++0x10  W * bytes_per_pixel / 4
++0x14  (X<<16) | Y     destination position
 ```
 
-Y la tabla de bits por píxel sale del `switch` de `0x08126f90`, que convierte el
-formato en un multiplicador `r1 ∈ {1,2,4,8}` y calcula el stride como
-`r1 * srcW / 2` — o sea `r1` es el doble de los bytes por píxel:
+And the bits-per-pixel table comes from the `switch` at `0x08126f90`, which converts the
+format into a multiplier `r1 ∈ {1,2,4,8}` and computes the stride as
+`r1 * srcW / 2` — i.e. `r1` is twice the bytes per pixel:
 `fmt 0 → 4 bpp, 1 → 8, 2..5 → 16, 6..7 → 32`.
 
-### Lo que un arranque real programa, medido
+### What a real boot programs, measured
 
 ```
-capa 0: stride 0x500 (1280 = 320*4), fmt 7 (32 bpp), origen 0x09767a24,
-        320x240 en (0,0)
-capa 1: stride 0x280 (640 = 320*2),  fmt 3 (16 bpp), origen 0x0be2326c,
-        108x240 en (212,0)          <- 212 + 108 = 320 al píxel
+layer 0: stride 0x500 (1280 = 320*4), fmt 7 (32 bpp), source 0x09767a24,
+         320x240 at (0,0)
+layer 1: stride 0x280 (640 = 320*2),  fmt 3 (16 bpp), source 0x0be2326c,
+         108x240 at (212,0)          <- 212 + 108 = 320 to the pixel
 ```
 
-**Y ahí estaba la imagen todo el tiempo.** `pmemsave 0x09767a24 0x4b000` y
-mirarlo como 320×240 de 32 bits da la pantalla de idioma entera, ya compuesta.
-No había que inventar nada: había que copiarla al panel.
+**And the image was there all along.** `pmemsave 0x09767a24 0x4b000` and
+viewing it as 320×240 at 32 bits gives the whole language screen, already composited.
+Nothing had to be invented: it just had to be copied to the panel.
 
-`W` y `H` son **con signo**: mientras el panel derecho se desliza fuera de la
-pantalla el firmware escribe `+0x07c = 0xffc900f0`, o sea anchura −55. Un
-modelo que los lea sin signo dibuja 65 481 columnas de basura.
+`W` and `H` are **signed**: while the right-hand panel slides off the
+screen the firmware writes `+0x07c = 0xffc900f0`, i.e. width −55. A
+model that reads them as unsigned draws 65 481 columns of garbage.
 
-### El orden de bytes, que es lo único INFERIDO del camino
+### The byte order, which is the only INFERRED part of the path
 
-Se lee la fuente de 32 bits como ARGB8888 *little-endian* (bytes B, G, R, A) y
-la de 16 bits como RGB565. El argumento, por orden de peso:
+The 32-bit source is read as *little-endian* ARGB8888 (bytes B, G, R, A) and
+the 16-bit one as RGB565. The argument, in order of weight:
 
-1. **El panel es RGB565 con el rojo arriba**, y eso no lo decimos nosotros:
-   `firmware/export/config/ipod6g.h:85` de Rockbox dice
-   `#define LCD_PIXELFORMAT RGB565` para este aparato exacto. Luego una capa de
-   16 bits entregada tal cual es RGB565, y leída así el panel «Welcome» es el
-   degradado azul grisáceo que el iPod tiene de verdad.
-2. **La capa de 32 bits lleva el mismo dibujo ya compuesto** — su tercio derecho
-   *es* ese degradado. Sólo la lectura ARGB8888 hace que las dos coincidan; la
-   otra vuelve marrones a las dos.
-3. Y entonces la barra de selección sale `0xff0484da` = **#0484da**, el azul de
-   selección de Apple. Al revés sale #da8404, un naranja que no aparece en
-   ninguna parte de esta interfaz.
+1. **The panel is RGB565 with red on top**, and that is not our claim:
+   Rockbox's `firmware/export/config/ipod6g.h:85` says
+   `#define LCD_PIXELFORMAT RGB565` for this exact device. So a 16-bit layer
+   delivered as is is RGB565, and read that way the "Welcome" panel is the
+   greyish-blue gradient the iPod really has.
+2. **The 32-bit layer carries the same drawing already composited** — its right
+   third *is* that gradient. Only the ARGB8888 reading makes the two match; the
+   other one turns both brown.
+3. And then the selection bar comes out as `0xff0484da` = **#0484da**, Apple's
+   selection blue. The other way round it comes out as #da8404, an orange that appears
+   nowhere in this interface.
 
-Sigue siendo una inferencia — no hay *datasheet*, y el bloque lleva tablas de
-matriz de color con las que podría permutar canales. Son dos líneas de
-`ipod_classic_disp.c` si aparece evidencia mejor.
+It is still an inference — there is no *datasheet*, and the block has color
+matrix tables with which it could permute channels. It is two lines of
+`ipod_classic_disp.c` if better evidence turns up.
 
-### Cuándo se compone, y por qué no en `+0x70`
+### When compositing happens, and why not at `+0x70`
 
-El modelo compone en `gfx_update`, o sea justo antes de enseñar el panel, no al
-escribir `LCD[0x70] = 1`. La razón es una medida: **con disco, `LCDTRACE` cuenta
-un solo arranque del motor de trama en 45 s**, y después la interfaz sigue
-re-apuntando los descriptores de capa durante la animación sin volver a tocar
-`+0x70`. Un modelo que sólo compusiera ahí enseñaría un cuadro congelado.
+The model composites in `gfx_update`, i.e. just before showing the panel, not when
+`LCD[0x70] = 1` is written. The reason is a measurement: **with a disk, `LCDTRACE` counts
+a single start of the frame engine in 45 s**, and afterwards the interface keeps
+re-pointing the layer descriptors during the animation without touching
+`+0x70` again. A model that only composited there would show a frozen frame.
 
-Es una **decisión de modelado**, no una medida: se comporta como un motor que
-barre sus capas de forma continua, que es a lo que se parece el juego de
-registros. Está dicho en voz alta en `ipod_classic_lcd_gfx_update()` y es lo
-primero que hay que revisar si alguna vez la pantalla va un cuadro por detrás.
+It is a **modeling decision**, not a measurement: it behaves like an engine that
+scans its layers continuously, which is what the register set looks like.
+It is stated out loud in `ipod_classic_lcd_gfx_update()` and it is the
+first thing to check if the screen is ever a frame behind.
 
-### Lo que se guarda pero no se honra
+### What is stored but not honored
 
-Las tablas de gamma, las cuatro tablas de coeficientes de matriz de color, el
-escalador (`+0x04c/+0x50/+0x54`), el rectángulo de destino (`+0x030/+0x034`) y
-el bit de rotación de `+0x3ac`. **Todos son la identidad en todos los arranques
-medidos** — las tablas de gamma son literalmente `tbl[i] = i*4` —, así que
-honrarlos hoy no cambiaría un píxel y no habría forma de comprobar si están
-bien. Se leen y se devuelven; nada más.
+The gamma tables, the four color matrix coefficient tables, the
+scaler (`+0x04c/+0x50/+0x54`), the destination rectangle (`+0x030/+0x034`) and
+the rotation bit at `+0x3ac`. **All of them are the identity in every measured
+boot** — the gamma tables are literally `tbl[i] = i*4` —, so
+honoring them today would not change a pixel and there would be no way to check whether they are
+right. They are read and returned; nothing more.
 
 ---
 
-## 14. Por qué el arranque con disco estaba parado: DMAC0, no el ATA
+## 14. Why the boot with a disk was stuck: DMAC0, not the ATA
 
-**Corrección de fondo al §9.** La frase «el agujero está entre *el DMA terminó*
-y *despierta a quien lo pidió*» apuntaba al sitio correcto pero al periférico
-equivocado. El ATA cierra su ciclo entero: las dos transferencias por DMA
-terminan, la interrupción llega y el semáforo RTXC del ATA se levanta y despierta
-a quien esperaba. Lo que no vuelve nunca es un `memcpy` **posterior**, hecho por
+**Fundamental correction to §9.** The sentence "the hole is between *the DMA finished*
+and *wakes whoever requested it*" pointed at the right place but at the wrong
+peripheral. The ATA completes its whole cycle: both DMA transfers
+finish, the interrupt arrives and the ATA's RTXC semaphore is raised and wakes
+whoever was waiting. What never comes back is a **later** `memcpy`, done by
 DMAC0.
 
-La cadena, desensamblada:
+The chain, disassembled:
 
 ```
-0x2200844c   memcpy por DMA (r0 = destino, r1 = origen, r2 = 0x1000)
-  0x22004808.., 0x220049c4.., 0x22004b64..   programa DMAC0 canal 0
+0x2200844c   memcpy via DMA (r0 = destination, r1 = source, r2 = 0x1000)
+  0x22004808.., 0x220049c4.., 0x22004b64..   programs DMAC0 channel 0
   0x22008600   dma_wait(controlador, canal):
                  sema = [0x2200adec + ctrl*32 + canal*4 - 32]   -> 0x5f (95)
-                 KS_wait(sema)        <- codigo 1, SIN nodo de temporizador
+                 KS_wait(sema)        <- code 1, NO timer node
 ```
 
-`KS_wait` sin *timeout* no expira nunca. El único que puede levantar ese
-semáforo es la ISR de fin de cuenta de DMAC0, `0x220027b4`, registrada en
-`0x080357f4` sobre **IRQ 16**, entrada `0x22002810`. Y `0x38200000` era
+`KS_wait` without a *timeout* never expires. The only thing that can raise that
+semaphore is DMAC0's terminal-count ISR, `0x220027b4`, registered at
+`0x080357f4` on **IRQ 16**, entry `0x22002810`. And `0x38200000` was
 `create_unimplemented_device`.
 
-Además hacía daño en silencio: `0x22004b68` hace lectura-modificación-escritura
-sobre `C0Control`, y con el bloque devolviendo cero la escritura final salía
-`0x0c000000` en vez de llevar el bit `I`, los anchos y la cuenta. **Un modelo que
-sólo generase la interrupción sin devolver bien las lecturas seguiría fallando.**
+It was also doing silent damage: `0x22004b68` does a read-modify-write
+on `C0Control`, and with the block returning zero the final write came out as
+`0x0c000000` instead of carrying the `I` bit, the widths and the count. **A model that
+only generated the interrupt without returning the reads correctly would still fail.**
 
-Son PL080 de verdad, y lo dicen dos fuentes que coinciden: Rockbox los nombra
-(`firmware/target/arm/s5l8702/dma-s5l8702.h:33-36`, «2 PL080 DMA controllers» en
-`0x38200000` y `0x39900000`) y los desplazamientos que el retailOS usa cuadran
-byte a byte con `hw/dma/pl080.h`. QEMU ya trae el modelo, así que fue cablearlo:
+They are real PL080s, and two sources agree on it: Rockbox names them
+(`firmware/target/arm/s5l8702/dma-s5l8702.h:33-36`, "2 PL080 DMA controllers" at
+`0x38200000` and `0x39900000`) and the offsets the retailOS uses match
+byte for byte with `hw/dma/pl080.h`. QEMU already ships the model, so it was a matter of wiring it:
 
-- región de `0x1000`, no `0x100000`, para que el resto del bloque siga cayendo
-  al *io floor* y `-d unimp` lo diga si el huésped lo toca;
-- IRQ 16 y 17, que el huésped ya tiene desenmascaradas
+- a `0x1000` region, not `0x100000`, so the rest of the block keeps falling
+  to the *io floor* and `-d unimp` reports it if the guest touches it;
+- IRQ 16 and 17, which the guest already has unmasked
   (`VIC0 INTENABLE = 0x21a3010f`); †
-- y el puerto maestro tiene que ser la memoria del sistema, porque el huésped
-  programa los canales con el alias **cacheado** (`0x0be55320`) mientras la CPU
-  corre sobre el no cacheado (`0x8be55320`).
+- and the master port has to be system memory, because the guest
+  programs the channels with the **cached** alias (`0x0be55320`) while the CPU
+  runs on the uncached one (`0x8be55320`).
 
-> † **Dos lecturas distintas de `INTENABLE`, y no están reconciliadas.** Aquí
-> son `0x21A3010F`; `ipod_classic.c:640` e `ipod_classic_wheel.h:149` dicen
-> `0x01A3010F`, tomado en otro momento del arranque. Difieren **sólo en el bit
-> 29**. Ninguna de las dos conclusiones depende de eso: los bits 16, 17 y 23
-> están puestos en las dos (`3` en el nibble 19..16, `A` en el 23..20). Cuál de
-> las dos es el estado en régimen es `INDETERMINADO`, y quien lo mida que corrija
-> aquí y en los dos sitios del código.
+> † **Two different readings of `INTENABLE`, and they are not reconciled.** Here
+> it is `0x21A3010F`; `ipod_classic.c:640` and `ipod_classic_wheel.h:149` say
+> `0x01A3010F`, taken at another point in the boot. They differ **only in bit
+> 29**. Neither conclusion depends on that: bits 16, 17 and 23
+> are set in both (`3` in nibble 19..16, `A` in 23..20). Which of
+> the two is the steady state is `UNDETERMINED`, and whoever measures it should correct it
+> here and in the two places in the code.
 
-### Lo que se destrabó, medido
+### What got unstuck, measured
 
-`-d in_asm` con `E.img`, contando sólo prólogos de función verificados. Todas
-estas direcciones daban **cero** en todas las trazas anteriores del proyecto:
+`-d in_asm` with `E.img`, counting only verified function prologues. All
+these addresses gave **zero** in every previous trace of the project:
 
-| Dirección | Qué es | Antes | Ahora |
+| Address | What it is | Before | Now |
 |---|---|---|---|
-| `0x080aee04` | parser de MBR | 0 | **1** |
-| `0x0808f8f4` | localizar la partición de firmware | 0 | **1** |
-| `0x0805712c` | **el parser `]ih[`** | 0 | **1** |
-| `0x08040cf8` | montar `rsrc` como volumen 4 | 0 | **1** |
-| `0x08122a04` | levantar la bandera de almacenamiento | 0 | **1** |
-| `0x081228d0` | la **salida** de `while (![obj+0x28]) wait();` | 0 | **1** |
-| `0x08239134` | iterar `Resources/Fonts` | 0 | **1** |
-| `0x08239658` | construir el objeto de cadena | 0 | **1** |
-| `0x0815b1b8` | el código de interfaz que dibuja texto | 0 | **1** |
+| `0x080aee04` | MBR parser | 0 | **1** |
+| `0x0808f8f4` | locate the firmware partition | 0 | **1** |
+| `0x0805712c` | **the `]ih[` parser** | 0 | **1** |
+| `0x08040cf8` | mount `rsrc` as volume 4 | 0 | **1** |
+| `0x08122a04` | raise the storage flag | 0 | **1** |
+| `0x081228d0` | the **exit** of `while (![obj+0x28]) wait();` | 0 | **1** |
+| `0x08239134` | iterate `Resources/Fonts` | 0 | **1** |
+| `0x08239658` | build the string object | 0 | **1** |
+| `0x0815b1b8` | the interface code that draws text | 0 | **1** |
 
-Es exactamente la cadena que predecían los dos informes previos, eslabón por
-eslabón, y ahora está medida de punta a punta. Que la pantalla tenga texto en
-nueve escrituras distintas es la prueba independiente: esas tipografías sólo
-existen en `\Resources\Fonts\` del volumen `rsrc` del disco.
+It is exactly the chain the two previous reports predicted, link by
+link, and now it is measured end to end. That the screen has text in
+nine different scripts is the independent proof: those fonts only
+exist in `\Resources\Fonts\` of the disk's `rsrc` volume.
 
-`0x080a38cc` (parser de Apple Partition Map) sigue en cero, y ahora por la razón
-buena: `E.img` lleva MBR, así que se toma la otra rama.
+`0x080a38cc` (Apple Partition Map parser) is still at zero, and now for the right
+reason: `E.img` has an MBR, so the other branch is taken.
 
 ---
 
-## 15. Cómo reproducir la imagen
+## 15. How to reproduce the image
 
 ```bash
 wsl -d Ubuntu-24.04 -e bash -c "cd /mnt/c/Desarrollo/qemu-ios/build && ninja qemu-system-arm"
 
-# la segunda partición: un FAT32 VACÍO. No hace falta nada dentro -- las
-# tipografías están en la partición de FIRMWARE, no aquí (ver la nota de abajo)
+# the second partition: an EMPTY FAT32. Nothing needs to be inside -- the
+# fonts are in the FIRMWARE partition, not here (see the note below)
 truncate -s 64M ~/6g/fat32.img
 mkfs.vfat -F 32 -n IPOD ~/6g/fat32.img
 
-# el disco, a partir del .ipsw, con MBR en unidades de 4096
+# the disk, from the .ipsw, with MBR in 4096-byte units
 python3 tools/ipod_classic/mkdisk6g4k.py ~/6g/E.img \
         assets/extracted/Firmware-24.9.1.2 ~/6g/fat32.img
 
-# arrancar y medir
+# boot and measure
 sh tools/ipod_classic/audit_run.sh px 45 -serial null \
    -drive if=ide,format=raw,file=$HOME/6g/E.img
 #   => non-black: 75463 (98.3%) ; distinct colours: 404
 
-# y MIRARLA, que es la mitad de la medida
+# and LOOK at it, which is half of the measurement
 python3 tools/ipod_classic/ppm2png.py /tmp/aud/px.ppm /tmp/px.png
 ```
 
-> **De dónde salen las tipografías, y conviene decirlo porque el §4 se puede
-> leer mal.** El volumen FAT32 de esa receta está **vacío** (`mdir` no lista
-> nada) y aun así la pantalla sale con texto en nueve escrituras. El volumen 4
-> `rsrc` con `Resources/Fonts` **no está en el FAT32**: es una de las cuatro
-> imágenes de la partición de firmware, `fwtool.py list
-> assets/extracted/Firmware-24.9.1.2` la enseña como
-> `[0] rsrc off=0x00007000 len=0x04e00000` (81 MB). O sea que el único
-> ingrediente real es el `Firmware-24.9.1.2` del `.ipsw`; el FAT32 sólo tiene
-> que existir para que la segunda entrada del MBR apunte a algo. Comprobado
-> creando el FAT32 desde cero con las dos órdenes de arriba: misma imagen,
-> mismos 75 463 píxeles.
+> **Where the fonts come from, and it is worth saying because §4 can be
+> misread.** The FAT32 volume in that recipe is **empty** (`mdir` lists
+> nothing) and even so the screen comes out with text in nine scripts. Volume 4
+> `rsrc` with `Resources/Fonts` **is not in the FAT32**: it is one of the four
+> images in the firmware partition; `fwtool.py list
+> assets/extracted/Firmware-24.9.1.2` shows it as
+> `[0] rsrc off=0x00007000 len=0x04e00000` (81 MB). So the only
+> real ingredient is the `Firmware-24.9.1.2` from the `.ipsw`; the FAT32 only has
+> to exist so that the second MBR entry points to something. Checked by
+> creating the FAT32 from scratch with the two commands above: same image,
+> same 75 463 pixels.
 
-Tiempo hasta el primer píxel: entre 22 y 30 s de reloj de pared en esta máquina
-(medido con tres `screendump` a 22, 30 y 38 s: negro, imagen, la misma imagen).
-Después se queda quieta: la animación de la interfaz termina y no hay entrada de
-rueda que la mueva.
+Time to first pixel: between 22 and 30 s of wall-clock time on this machine
+(measured with three `screendump`s at 22, 30 and 38 s: black, image, the same image).
+After that it stays still: the interface animation finishes and there is no wheel
+input to move it.
 
-Para ver qué hace el compositor:
+To see what the compositor does:
 
 ```bash
 DISPTRACE=1 ./qemu-system-arm -M iPod-Classic ... 2>&1 | grep -E 'SOURCE|LAYER'
 ```
 
-### Regresiones comprobadas
+### Regressions checked
 
-| Prueba | Resultado |
+| Test | Result |
 |---|---|
-| `lcdtest.S`, el caso de control del panel | 76 800/76 800 píxeles, 1920 colores — **igual que antes** |
-| retailOS **sin** disco | 0 píxeles y el mismo ciclo de caída — igual que antes, y es del huésped |
-| `tools/ipod_video/navtest.sh` (el 5G) | 76 548 px en los 7 fotogramas, el resaltado se mueve (12 312, 12 114, ~31 600) |
+| `lcdtest.S`, the panel control case | 76 800/76 800 pixels, 1920 colors — **same as before** |
+| retailOS **without** disk | 0 pixels and the same crash loop — same as before, and it is the guest's |
+| `tools/ipod_video/navtest.sh` (the 5G) | 76 548 px in all 7 frames, the highlight moves (12 312, 12 114, ~31 600) |
 
-> Nota sobre el último número: varía de carrera a carrera (31 632, 31 603,
-> 31 588 en tres pasadas) porque el test pulsa teclas por reloj de pared. Los
-> 76 548 y los dos saltos de 12 312 / 12 114 sí son estables.
+> Note on the last number: it varies from run to run (31 632, 31 603,
+> 31 588 in three passes) because the test presses keys by wall-clock time. The
+> 76 548 and the two jumps of 12 312 / 12 114 are stable.
 
-### Lo siguiente, en orden de coste
+### Next steps, in order of cost
 
-1. ~~**La rueda de pulsación** (`0x3C200000`, hoy sin implementar). El huésped la
-   sondea ~120 veces por segundo, así que ya hay quien escuche; falta el modelo.
-   Sin ella la interfaz se ve pero no se puede usar.~~ **HECHO, §17.** Y la
-   frase estaba mal: el huésped **no** sondea. Hace una sola transacción
-   sondeada en el arranque y después espera la **IRQ 23**. Corregido en §17.6.
-2. **El arranque sin disco** sigue en el ciclo de caída del §4, y ahora se sabe
-   que es irreparable por ese camino: no hay tipografías dentro de la imagen.
-3. **Las capas de 4 y 8 bits** no se decodifican (falta la paleta) y ninguna se
-   ha visto usada. `-d unimp` lo dirá si aparecen.
-4. **El escalador y la matriz de color**, si alguna vez el huésped deja de
-   escribir la identidad — por ejemplo al reproducir vídeo.
+1. ~~**The click wheel** (`0x3C200000`, currently unimplemented). The guest
+   polls it ~120 times per second, so someone is already listening; the model is missing.
+   Without it the interface can be seen but not used.~~ **DONE, §17.** And the
+   sentence was wrong: the guest does **not** poll. It does a single polled
+   transaction at boot and then waits for **IRQ 23**. Corrected in §17.6.
+2. **The boot without a disk** is still in the crash loop of §4, and it is now known
+   to be unfixable that way: there are no fonts inside the image.
+3. **The 4- and 8-bit layers** are not decoded (the palette is missing) and none has
+   been seen in use. `-d unimp` will report it if they appear.
+4. **The scaler and the color matrix**, if the guest ever stops
+   writing the identity — for example when playing video.
 
 ---
 
-## 16. Tercera auditoría independiente (10 de agosto de 2026)
+## 16. Third independent audit (August 10, 2026)
 
-Se volvió a medir todo lo del §13, §14 y §15 desde cero, con el árbol tal cual
-está y sin creerse ninguna cifra de antes.
+Everything in §13, §14 and §15 was re-measured from scratch, with the tree as
+it is and without trusting any previous figure.
 
-### Lo que se **confirma**
+### What is **confirmed**
 
-| Afirmación | Cómo se comprobó aquí |
+| Claim | How it was checked here |
 |---|---|
-| **Hay imagen, y es la interfaz de Apple** | `audit_run.sh px 45` con `E.img` → **75 463/76 800 píxeles, 404 colores**, y la imagen **mirada**: barra de título «Language» con batería y candado, lista de nueve idiomas con 日本語 y Ελληνικά, barra de selección azul sobre «English», y el panel «Welcome/Bienvenue/Willkommen» a la derecha. No es basura ni un patrón de prueba |
-| Reproducible | Cuatro arranques distintos dan el **mismo** 75 463; uno de ellos con un disco **construido desde cero** con la receta del §15 (`truncate` + `mkfs.vfat` + `mkdisk6g4k.py`) |
-| **Dibuja y no se muere** | 50 s de `-d int,guest_errors,unimp` con disco: **0 `Taking exception 4`**, 0 `SWRCON`, 0 `CPU_exception_handler`, 43 840 IRQ y nada más. Los cambios de modo a `abt`/`fiq`/`und`/`irq` son uno de cada, del `msr cpsr` con el que el firmware monta las pilas por modo; no son excepciones |
-| Sin disco no cambia nada | 30 s → **0 píxeles**, 30 *Data Abort* + 30 semihosting + 30 `SWRCON`: el mismo ciclo de caída del §4 |
-| Caso de control del panel intacto | `lcdtest.S` → **76 800/76 800, 1920 colores**, y la rampa mirada |
-| Sin regresión en el 5G | `navtest.sh` → **76 548 px** en los 7 fotogramas y el resaltado se mueve: 12 312, 12 114, 31 598 |
-| La ventana de 4 KB basta | En el arranque de 50 s con `-d unimp` **no aparece ni una línea `s5l8702.io:`**: cero accesos al *io floor* en todo el arranque |
-| El *switch* de descriptores de capa | Desensamblado a mano: tabla de saltos en `0x08127068`, cinco ramas en `0x08127080/b0/e0/110/140`, todas escribiendo `base + 0x00/04/0c/10/14` |
-| La tabla de bytes por píxel | El *switch* de `0x08126f90` da `r1 ∈ {1,2,4,8}` para `fmt` 0 / 1 / 2‑5 / 6‑7 y luego `mul r2,r1,r2 ; lsr r2,r2,#1`, o sea `r1 = 2 × bpp`. Cuadra con `disp_bpp()` entrada por entrada |
-| El bit 16 de `+0x04` | `cmp r1,#8 ; orrcc r3,r3,#0x10000` en `0x08127050`: puesto exactamente cuando **no** es de 32 bpp |
-| Las direcciones del §14 son entradas de verdad | `0x0805712c`, `0x080aee04` y `0x08040cf8` empiezan por `push`; `0x081228d0` no es un prólogo pero **sí** es cabeza de bloque de traducción (es el destino de caída del `beq` de `0x081228cc`), así que medirlo con `-d in_asm` es válido |
-| DMAC0/1 son PL080 y van en IRQ 16/17 | Rockbox, fuente independiente: `s5l87xx.h:1893`, `#define IRQ_DMAC(d) (16+(d))` |
+| **There is an image, and it is Apple's interface** | `audit_run.sh px 45` with `E.img` → **75 463/76 800 pixels, 404 colors**, and the image **looked at**: "Language" title bar with battery and lock, a list of nine languages including 日本語 and Ελληνικά, a blue selection bar over "English", and the "Welcome/Bienvenue/Willkommen" panel on the right. It is neither garbage nor a test pattern |
+| Reproducible | Four different boots give the **same** 75 463; one of them with a disk **built from scratch** with the §15 recipe (`truncate` + `mkfs.vfat` + `mkdisk6g4k.py`) |
+| **It draws and does not die** | 50 s of `-d int,guest_errors,unimp` with a disk: **0 `Taking exception 4`**, 0 `SWRCON`, 0 `CPU_exception_handler`, 43 840 IRQs and nothing else. The mode changes to `abt`/`fiq`/`und`/`irq` are one each, from the `msr cpsr` the firmware uses to set up per-mode stacks; they are not exceptions |
+| Without a disk nothing changes | 30 s → **0 pixels**, 30 *Data Aborts* + 30 semihosting + 30 `SWRCON`: the same crash loop as §4 |
+| Panel control case intact | `lcdtest.S` → **76 800/76 800, 1920 colors**, and the ramp looked at |
+| No regression on the 5G | `navtest.sh` → **76 548 px** in all 7 frames and the highlight moves: 12 312, 12 114, 31 598 |
+| The 4 KB window is enough | In the 50 s boot with `-d unimp` **not a single `s5l8702.io:` line appears**: zero accesses to the *io floor* during the whole boot |
+| The layer descriptor *switch* | Disassembled by hand: jump table at `0x08127068`, five branches at `0x08127080/b0/e0/110/140`, all writing `base + 0x00/04/0c/10/14` |
+| The bytes-per-pixel table | The *switch* at `0x08126f90` gives `r1 ∈ {1,2,4,8}` for `fmt` 0 / 1 / 2‑5 / 6‑7 and then `mul r2,r1,r2 ; lsr r2,r2,#1`, i.e. `r1 = 2 × bpp`. Matches `disp_bpp()` entry by entry |
+| Bit 16 of `+0x04` | `cmp r1,#8 ; orrcc r3,r3,#0x10000` at `0x08127050`: set exactly when it is **not** 32 bpp |
+| The §14 addresses are real entry points | `0x0805712c`, `0x080aee04` and `0x08040cf8` start with `push`; `0x081228d0` is not a prologue but **is** the head of a translation block (it is the fall-through target of the `beq` at `0x081228cc`), so measuring it with `-d in_asm` is valid |
+| DMAC0/1 are PL080s and are on IRQ 16/17 | Rockbox, an independent source: `s5l87xx.h:1893`, `#define IRQ_DMAC(d) (16+(d))` |
 
-### El experimento de control que faltaba: ¿de verdad hacían falta las dos?
+### The missing control experiment: were both really needed?
 
-El §13 y el §14 afirman que la imagen necesitaba el compositor **y** los PL080.
-El compositor es evidente, es lo único que dibuja; lo del DMAC0 era una
-inferencia sobre una cadena larga. Se comprobó quitándolo:
+§13 and §14 claim that the image needed the compositor **and** the PL080s.
+The compositor is obvious, it is the only thing that draws; the DMAC0 part was an
+inference over a long chain. It was checked by removing it:
 
-> Con el compositor puesto y los dos PL080 fuera, arranque con `E.img` de 45 s:
-> **0 píxeles, 0 colores, y ni una sola línea de `SOURCE ADDRESS`**. El
-> compositor está ahí y nadie le da nunca una dirección de origen.
+> With the compositor in place and both PL080s removed, a 45 s boot with `E.img`:
+> **0 pixels, 0 colors, and not a single `SOURCE ADDRESS` line**. The
+> compositor is there and nobody ever gives it a source address.
 
-O sea: **las dos hacían falta**, y el §14 no es una historia bonita sino una
-causa. (El parche era un `getenv` provisional; se revirtió, no está en el árbol.)
+In other words: **both were needed**, and §14 is not a nice story but a
+cause. (The patch was a temporary `getenv`; it was reverted, it is not in the tree.)
 
-### Lo que se **corrige**
+### What is **corrected**
 
-1. **La cabecera de `ipod_classic_disp.c` decía lo contrario de lo que hace el
-   fichero**: «un fichero de registros… deliberadamente menos que un motor de
-   composición… un compositor aquí estaría inventando píxeles», treinta líneas
-   encima de `ipod_classic_disp_compose()`. Reescrita.
-2. **`ipod_classic_disp_compose()` decía «no two layers have ever overlapped in
-   a boot we have traced». Es falso**, y era justo el dato que sostiene el orden
-   Z. Medido con `DISPTRACE=1`: la capa 1 va `(x=80,w=240)`, `(82,238)`,
-   `(95,225)`, `(122,198)`, `(168,152)`, `(232,88)`, `(310,10)`, `(400,−80)`, con
-   `x + w = 320` en todos los pasos, encima de una capa 0 de 320×240 en (0,0).
-   Es un **barrido** y solapa siempre. Corregido, y con ello el orden Z pasa de
-   «no hay medida» a «hay una medida a favor»: la capa que se desliza tiene que
-   ir **delante** o no hay transición.
-3. **El aviso de fin de trama del LCD mentía.** `panel_frame_go()` seguía
-   emitiendo por `LOG_UNIMP` «no source address exists anywhere in this window
+1. **The header of `ipod_classic_disp.c` said the opposite of what the
+   file does**: "a register file… deliberately less than a composition
+   engine… a compositor here would be inventing pixels", thirty lines
+   above `ipod_classic_disp_compose()`. Rewritten.
+2. **`ipod_classic_disp_compose()` said "no two layers have ever overlapped in
+   a boot we have traced". That is false**, and it was exactly the fact supporting the Z
+   order. Measured with `DISPTRACE=1`: layer 1 goes `(x=80,w=240)`, `(82,238)`,
+   `(95,225)`, `(122,198)`, `(168,152)`, `(232,88)`, `(310,10)`, `(400,−80)`, with
+   `x + w = 320` at every step, on top of a 320×240 layer 0 at (0,0).
+   It is a **sweep** and always overlaps. Corrected, and with that the Z order goes from
+   "no measurement" to "one measurement in favor": the sliding layer has to
+   be **in front** or there is no transition.
+3. **The LCD end-of-frame warning was lying.** `panel_frame_go()` was still
+   emitting via `LOG_UNIMP` "no source address exists anywhere in this window
    and no DMA channel points at LCD_WDATA, so where it would read from is
-   UNDETERMINED», que dejó de ser cierto en el §13. Reescrito: lo que sigue
-   siendo INDETERMINADO no es de dónde lee, es si `+0x70` **engancha** un cuadro
-   o sólo habilita el barrido.
-4. **El contador de direcciones de origen contaba transiciones, no escrituras.**
-   `if (value != last_src)` con dos ranuras que se turnan imprime una línea por
-   escritura, no «una por valor distinto» como decía el comentario: salían 21
-   líneas por arranque a `stderr`, que es justo el canal que la lección 1 pide
-   mantener limpio. Ahora se anuncia **la primera** y punto, y el total del final
-   cuenta **todas** las escrituras. De paso, esas escrituras ya no se saltan la
-   traza: `DISPTRACE=1` decía «cada acceso» y se dejaba fuera `+0x060` y `+0x078`
-   por un `return` temprano.
-5. **`composed_frames` se incrementaba y no se imprimía nunca.** Ahora sale en
-   los totales de `LCDTRACE`, junto a los arranques del motor de trama.
-6. **La cabecera decía que el *switch* de capas escribe «los mismos seis
-   registros».** Escribe **cinco**: `+0x08`, la dirección de origen, viene de
-   otro sitio (`0x081276dc`). Es la diferencia entre «esta capa tiene geometría»
-   y «esta capa tiene algo que leer», que es exactamente lo que distingue un
-   arranque sin disco de uno con disco.
-7. **La receta del §15 no era reproducible**: pedía un `~/6g/fat32.img` sin decir
-   cómo hacerlo. Se documenta, y con ello un hecho que no estaba escrito: ese
-   FAT32 está **vacío** y da igual, porque las tipografías están en la imagen
-   `rsrc` de la partición de **firmware**, no en el volumen FAT.
-8. **`0x00001000` como valor de las tres configuraciones de capa** es de un
-   arranque **sin** disco. Con disco `+0x0e0` y `+0x0e8` se reescriben 17 y 21
-   veces. Anotado en la cabecera.
-9. **Los §3, §6, §9 y §12 describían el estado anterior sin decirlo**, y el §6
-   contradice de plano la tabla del §14 (las mismas nueve direcciones, «nunca» en
-   uno y «1» en el otro). Marcados como históricos.
+   UNDETERMINED", which stopped being true in §13. Rewritten: what is still
+   UNDETERMINED is not where it reads from, but whether `+0x70` **latches** a frame
+   or only enables scanning.
+4. **The source address counter was counting transitions, not writes.**
+   `if (value != last_src)` with two slots that alternate prints one line per
+   write, not "one per distinct value" as the comment said: it produced 21
+   lines per boot to `stderr`, which is exactly the channel lesson 1 asks to
+   keep clean. Now **the first** one is announced and that is it, and the final total
+   counts **all** writes. Incidentally, those writes no longer skip the
+   trace: `DISPTRACE=1` claimed "every access" and left out `+0x060` and `+0x078`
+   because of an early `return`.
+5. **`composed_frames` was incremented and never printed.** It now appears in
+   the `LCDTRACE` totals, next to the frame engine starts.
+6. **The header said the layer *switch* writes "the same six
+   registers".** It writes **five**: `+0x08`, the source address, comes from
+   elsewhere (`0x081276dc`). It is the difference between "this layer has geometry"
+   and "this layer has something to read", which is exactly what distinguishes a
+   boot without a disk from one with a disk.
+7. **The §15 recipe was not reproducible**: it asked for a `~/6g/fat32.img` without saying
+   how to make it. It is now documented, and with it a fact that had not been written down: that
+   FAT32 is **empty** and it does not matter, because the fonts are in the
+   `rsrc` image of the **firmware** partition, not in the FAT volume.
+8. **`0x00001000` as the value of the three layer configurations** is from a
+   boot **without** a disk. With a disk, `+0x0e0` and `+0x0e8` are rewritten 17 and 21
+   times. Noted in the header.
+9. **§3, §6, §9 and §12 described the previous state without saying so**, and §6
+   flatly contradicts the §14 table (the same nine addresses, "never" in
+   one and "1" in the other). Marked as historical.
 
-### Lo que **no** se pudo verificar, y hay que decirlo
+### What **could not** be verified, and it must be said
 
-- **La composición de varias capas nunca se ha visto en una imagen.** La capa 0
-  sola ya contiene la pantalla entera: se volcó con
-  `pmemsave 0x09767a24 0x4b000` y `ppm2png.py --raw 320x240:argb8888`, y es lo
-  mismo que sale por pantalla. La capa 1, volcada igual (`0x0be2326c`,
-  `rgb565`), es sólo el degradado **sin texto**. O sea que los 75 463 píxeles
-  prueban muy bien la ranura 0 —dirección, *stride*, formato y orden de bytes— y
-  **no prueban** el orden Z ni el recorte, porque el barrido de la capa 1 dura
-  menos de un segundo y ningún `screendump` lo ha cogido (probado a 20, 21, …,
-  28, 30 y 32 s: negro hasta 28 s, la pantalla ya quieta a 30 s). Si alguien
-  quiere cerrarlo, lo barato es un contador por ranura en `disp_draw_layer()` y
-  un `screendump` disparado desde el propio modelo la primera vez que dos capas
-  se solapen.
-- **Los «~120 sondeos por segundo» de la rueda** son una cifra de antes. En el
-  arranque con disco de esta auditoría salen 3 175 lecturas de `0x3C200000` en
-  50 s, pero con `-d int` puesto, que cambia el reloj de pared. La conclusión
-  («ya hay quien escuche») no depende del número.
-- **El orden de bytes sigue siendo INFERIDO**, y bien marcado en el código. La
-  imagen lo respalda de una forma que cuesta discutir —la barra de selección sale
-  `#0484da` y no `#da8404`—, pero eso es un argumento sobre los colores de Apple,
-  no un *datasheet*.
+- **Multi-layer compositing has never been seen in an image.** Layer 0
+  alone already contains the whole screen: it was dumped with
+  `pmemsave 0x09767a24 0x4b000` and `ppm2png.py --raw 320x240:argb8888`, and it is the
+  same as what appears on screen. Layer 1, dumped the same way (`0x0be2326c`,
+  `rgb565`), is only the gradient **without text**. So the 75 463 pixels
+  prove slot 0 very well —address, *stride*, format and byte order— and
+  **do not prove** the Z order or the clipping, because the layer 1 sweep lasts
+  less than a second and no `screendump` has caught it (tried at 20, 21, …,
+  28, 30 and 32 s: black until 28 s, the screen already still at 30 s). If someone
+  wants to close this, the cheap way is a per-slot counter in `disp_draw_layer()` and
+  a `screendump` triggered from the model itself the first time two layers
+  overlap.
+- **The wheel's "~120 polls per second"** is an older figure. In the
+  boot with a disk in this audit there are 3 175 reads of `0x3C200000` in
+  50 s, but with `-d int` on, which changes the wall-clock time. The conclusion
+  ("someone is already listening") does not depend on the number.
+- **The byte order is still INFERRED**, and clearly marked in the code. The
+  image supports it in a way that is hard to argue with —the selection bar comes out
+  `#0484da` and not `#da8404`—, but that is an argument about Apple's colors,
+  not a *datasheet*.
 
 ---
 
-## 17. La rueda de clic, y la pantalla que por fin se puede mover (10 de agosto de 2026)
+## 17. The click wheel, and the screen that can finally be moved (August 10, 2026)
 
-Hasta aquí el retailOS **se veía**. Ahora **se navega**: la rueda mueve la barra
-de selección por la lista de idiomas, y se puede demostrar con una medida que
-distingue "se movió un elemento" de "parpadeó un icono".
+Up to here the retailOS **could be seen**. Now **it can be navigated**: the wheel moves the selection
+bar through the language list, and it can be shown with a measurement that
+distinguishes "an item moved" from "an icon blinked".
 
-Piezas nuevas:
+New pieces:
 
-| Fichero | Qué es |
+| File | What it is |
 |---|---|
-| `hw/arm/ipod_classic/ipod_classic_wheel.c` | el bloque `0x3C200000`, IRQ 23, y el manejador de teclado |
-| `include/hw/arm/ipod_classic/ipod_classic_wheel.h` | el mapa de registros y de dónde sale cada línea |
-| `tools/ipod_classic/navtest.sh` | la prueba: arranca, espera, pulsa, captura y decide |
+| `hw/arm/ipod_classic/ipod_classic_wheel.c` | the `0x3C200000` block, IRQ 23, and the keyboard handler |
+| `include/hw/arm/ipod_classic/ipod_classic_wheel.h` | the register map and where each line comes from |
+| `tools/ipod_classic/navtest.sh` | the test: boots, waits, presses, captures and decides |
 
-Y una corrección de una línea en `ipod_classic_pmu.c` que resultó valer tanto
-como todo el modelo de la rueda; ver §17.4.
+And a one-line fix in `ipod_classic_pmu.c` that turned out to be worth as much
+as the whole wheel model; see §17.4.
 
-### 17.1 El mapa de registros
+### 17.1 The register map
 
-La base y los desplazamientos son de Rockbox (`firmware/export/s5l87xx.h:1642-1651`,
-`WHEEL_BASE 0x3C200000`, y `IRQ_WHEEL 23` en la `:1901`). Los **nombres**, en
-cambio, son casi todos nuestros: Rockbox sólo llama por su función a `WHEELINT`,
-`WHEELRX` y `WHEELTX`, y a los otros cinco los llama `WHEEL00`, `WHEEL04`,
-`WHEEL08`, `WHEEL0C` y `WHEEL10`. `WHEELCON`, `WHEELGO`, `WHEELDIV`,
-`WHEELSTAT`, `WHEELMASK` y `WHEELPEND` son inventos de este puerto para decir lo
-que creemos que hace cada uno. La semántica sí es del desensamblado de Apple,
-con `--adjust-vma=0x07FF51B8`.
+The base and the offsets are from Rockbox (`firmware/export/s5l87xx.h:1642-1651`,
+`WHEEL_BASE 0x3C200000`, and `IRQ_WHEEL 23` at `:1901`). The **names**, on the
+other hand, are almost all ours: Rockbox only names `WHEELINT`,
+`WHEELRX` and `WHEELTX` by their function, and calls the other five `WHEEL00`, `WHEEL04`,
+`WHEEL08`, `WHEEL0C` and `WHEEL10`. `WHEELCON`, `WHEELGO`, `WHEELDIV`,
+`WHEELSTAT`, `WHEELMASK` and `WHEELPEND` are inventions of this port to say what
+we believe each one does. The semantics, though, are from Apple's disassembly,
+with `--adjust-vma=0x07FF51B8`.
 
-| Off | Nombre | Qué hace el retailOS | Estado |
+| Off | Name | What the retailOS does | Status |
 |---|---|---|---|
-| `0x00` | `WHEELCON` | init `0x08056198`: `&=0xFFFF0000`, `&=~0x70000`, `&=~0x80000`, `&=~0x400000`, `\|=0x100000`, `\|=0x200000`. Antes de cada TX apaga y enciende el bit 21 | secuencia **VERIFICADA**, bits **DESCONOCIDOS** |
-| `0x04` | `WHEELGO` | `\|= 1` lanza la transferencia (`0x0832797c`) | **VERIFICADO** |
-| `0x08` | `WHEELDIV` | `= 0x0003A980` una vez (`0x080561e4`) | valor **VERIFICADO**, sentido **DESCONOCIDO** |
-| `0x0C` | `WHEELSTAT` | bit 0 «hay palabra», bit 3 «TX en curso» (`0x08327994`) | **VERIFICADO por uso** |
-| `0x10` | `WHEELMASK` | init `\|= 1`; guardado/puesto a 0/restaurado alrededor de cada transacción sondeada (`0x080afb48`) | máscara **INFERIDA**; ver §17.4 |
-| `0x14` | `WHEELPEND` | init `= 7`; el ISR escribe 7 al final (`0x08047a38`); el bucle escribe 1 para limpiar | **VERIFICADO**, escribir-1-para-limpiar |
-| `0x18` | `WHEELRX` | la palabra recibida (`0x080479bc`) | **VERIFICADO** |
-| `0x1C` | `WHEELTX` | `0x80000000 \| (cmd >> 1)`. Medido en el bus: `0xC000011D` | **VERIFICADO** |
+| `0x00` | `WHEELCON` | init `0x08056198`: `&=0xFFFF0000`, `&=~0x70000`, `&=~0x80000`, `&=~0x400000`, `\|=0x100000`, `\|=0x200000`. Before each TX it turns bit 21 off and on | sequence **VERIFIED**, bits **UNKNOWN** |
+| `0x04` | `WHEELGO` | `\|= 1` launches the transfer (`0x0832797c`) | **VERIFIED** |
+| `0x08` | `WHEELDIV` | `= 0x0003A980` once (`0x080561e4`) | value **VERIFIED**, meaning **UNKNOWN** |
+| `0x0C` | `WHEELSTAT` | bit 0 "word available", bit 3 "TX in progress" (`0x08327994`) | **VERIFIED by use** |
+| `0x10` | `WHEELMASK` | init `\|= 1`; saved/zeroed/restored around each polled transaction (`0x080afb48`) | mask **INFERRED**; see §17.4 |
+| `0x14` | `WHEELPEND` | init `= 7`; the ISR writes 7 at the end (`0x08047a38`); the loop writes 1 to clear | **VERIFIED**, write-1-to-clear |
+| `0x18` | `WHEELRX` | the received word (`0x080479bc`) | **VERIFIED** |
+| `0x1C` | `WHEELTX` | `0x80000000 \| (cmd >> 1)`. Measured on the bus: `0xC000011D` | **VERIFIED** |
 
-Los cuatro pines: el init llama a `0x08325468(pin, 2, 0)` para `0x72..0x75`, que
-es el `PCON14 = (PCON14 & ~0x00ffff00) | 0x00222200` de Rockbox
-(`button-clickwheel.c:386`). Confirmado en el bus: el modelo de GPIO registra
-`0xe0202/0xe0302/0xe0402/0xe0502` en `+0x200`.
+The four pins: the init calls `0x08325468(pin, 2, 0)` for `0x72..0x75`, which
+is Rockbox's `PCON14 = (PCON14 & ~0x00ffff00) | 0x00222200`
+(`button-clickwheel.c:386`). Confirmed on the bus: the GPIO model logs
+`0xe0202/0xe0302/0xe0402/0xe0502` at `+0x200`.
 
-### 17.2 Los dos paquetes
+### 17.2 The two packets
 
-**El que mueve la interfaz** — el ISR `0x080479a8` lo acepta si
+**The one that moves the interface** — the ISR `0x080479a8` accepts it if
 `(rx & 0xBC0000FF) == 0x8000001A`:
 
 ```
  31    30        25..16          12..8        7..0
- +---+------+---------------+-----------+-----------+
- | 1 | dedo |   posición    |  botones  |   0x1A    |
- +---+------+---------------+-----------+-----------+
+ +---+--------+---------------+-----------+-----------+
+ | 1 | finger |   position    |  buttons  |   0x1A    |
+ +---+--------+---------------+-----------+-----------+
 ```
 
-Rockbox describe el mismo paquete con la máscara más floja `0x800000FF`
-(`button-clickwheel.c:121`): dos fuentes independientes de acuerdo.
+Rockbox describes the same packet with the looser mask `0x800000FF`
+(`button-clickwheel.c:121`): two independent sources in agreement.
 
-**La respuesta a una orden sondeada** — validada en `0x0832783c` con
-`bic #0x7F000000` + `bic #0x00FF0000` + `cmp`: bit 31 y bits 15..0 iguales a la
-orden, bits 30..16 libres para los datos.
+**The reply to a polled command** — validated at `0x0832783c` with
+`bic #0x7F000000` + `bic #0x00FF0000` + `cmp`: bit 31 and bits 15..0 equal to the
+command, bits 30..16 free for the data.
 
-Botones, bits 8..12 del paquete, y el código de tecla que emite `0x0805c11c`:
-SELECT→3, adelante→1, atrás→2, PLAY→4, MENU→0. Los bits son los de Rockbox.
+Buttons, bits 8..12 of the packet, and the key code that `0x0805c11c` emits:
+SELECT→3, forward→1, back→2, PLAY→4, MENU→0. The bits are Rockbox's.
 
-### 17.3 Por qué el modelo se marca el ritmo con un temporizador
+### 17.3 Why the model paces itself with a timer
 
-El decodificador de giro `0x0807a670` impone tres condiciones duras:
+The rotation decoder `0x0807a670` imposes three hard conditions:
 
-1. **96 posiciones por vuelta** (los `±96` de `0x0807a6a4`, y el
-   `WHEELCLICKS_PER_ROTATION` de Rockbox).
-2. Hacen falta **dos paquetes seguidos con el bit 30 puesto** antes de que se
-   calcule ningún delta: el primero sólo arma.
-3. El umbral vuelve a **6** con cada paquete sin dedo, y la ventana aceptada es
+1. **96 positions per revolution** (the `±96` at `0x0807a6a4`, and Rockbox's
+   `WHEELCLICKS_PER_ROTATION`).
+2. **Two consecutive packets with bit 30 set** are needed before any
+   delta is computed: the first one only arms.
+3. The threshold goes back to **6** with each packet without a finger, and the accepted window is
    **−35..+35** (`0x0807a6dc`).
 
-De la 2 sale la decisión de diseño que no es evidente: **los paquetes se
-espacian con un temporizador, uno cada 40 ms de reloj virtual, en vez de
-encolarse de golpe**. El ISR sobrescribe `0x089116d8+0x20` en cada paquete; si
-dos entran antes de que la tarea de rueda corra una vez, el paquete de armado
-desaparece y el movimiento se lee como un primer toque y se tira. Una FIFO no
-basta: hace falta que el huésped vea cada paquete como su propia interrupción.
+From 2 comes the design decision that is not obvious: **packets are
+spaced out with a timer, one every 40 ms of virtual clock, instead of being
+queued all at once**. The ISR overwrites `0x089116d8+0x20` on each packet; if
+two come in before the wheel task runs once, the arming packet
+disappears and the movement is read as a first touch and dropped. A FIFO is not
+enough: the guest needs to see each packet as its own interrupt.
 
-Una pulsación de tecla son `IPOD_WHEEL_STEP` posiciones, por defecto **6**, que
-no es un número redondo elegido a ojo sino el umbral que el propio firmware
-tiene en `0x089116d8+0x04` en reposo, leído por el monitor.
+A key press is `IPOD_WHEEL_STEP` positions, **6** by default, which
+is not a round number chosen by eye but the threshold the firmware itself
+has at `0x089116d8+0x04` at rest, read via the monitor.
 
-### 17.4 Las dos trampas, y la segunda costó una tarde
+### 17.4 The two traps, and the second one cost an afternoon
 
-**Primera: `WHEELMASK` tiene que leerse honradamente.** El firmware lo guarda,
-lo pone a cero alrededor de una transacción sondeada y lo restaura. Mientras el
-bloque era `create_unimplemented_device` toda lectura daba cero, así que lo que
-restauraba era **cero**, y en el log se ve: doce escrituras de `0` a `+0x10`
-frente a una sola de `1`. Sin lectura honrada la interrupción queda enmascarada
-para siempre y ninguna pulsación llega jamás.
+**First: `WHEELMASK` has to read back honestly.** The firmware saves it,
+zeroes it around a polled transaction and restores it. While the
+block was `create_unimplemented_device` every read gave zero, so what it
+restored was **zero**, and you can see it in the log: twelve writes of `0` to `+0x10`
+versus a single one of `1`. Without honest readback the interrupt stays masked
+forever and no press ever arrives.
 
-**Segunda, y es la lección `HI_IRQ` del 5G otra vez: el INTERRUPTOR DE BLOQUEO
-del PMU.** Con la rueda ya modelada, el giro funcionaba y **los botones no**.
-Medido, con la tecla mantenida tres segundos y leyendo el bloque de estado del
-propio firmware:
+**Second, and it is the 5G's `HI_IRQ` lesson again: the PMU's HOLD
+SWITCH.** With the wheel already modeled, turning worked and **the buttons did not**.
+Measured, with the key held for three seconds and reading the firmware's own
+status block:
 
 ```
-0x089116d8+0x1C = 1   el paquete llegó y el ISR lo decodificó
-0x089116d8+0x14 = 1   la tarea de rueda corrió el detector de flancos
-                      0x0805c0e4 y llamó al despachador 0x0803f390
+0x089116d8+0x1C = 1   the packet arrived and the ISR decoded it
+0x089116d8+0x14 = 1   the wheel task ran the edge detector
+                      0x0805c0e4 and called the dispatcher 0x0803f390
 ```
 
-...y la pantalla no cambiaba. La causa está dentro del despachador, en
-`0x0803f3e0` —la instrucción **número 21** de la función, después de la cadena
-de cuatro comparaciones que remapea el código de tecla; una versión anterior de
-este párrafo decía «una instrucción después de la entrada» y era falso—.
-`0x0803f3e0` llama a `0x08030d48`, que es un `b 0x080634a4` pelado, y de ahí a
-`0x08294f80`, que lee **un byte del registro `0x87` del PMU por I2C**
-(`mov r0,#0x87` / `and r0,r0,#2` / `lsr r0,r0,#1`) y se queda con
-`(byte >> 1) & 1`; `0x080634a4` devuelve `1 − eso` (`rsbs r0,r0,#1` /
-`movcc r0,#0`); y `0x0803f3e4` **vuelve inmediatamente si es distinto de cero**
-(`cmp r0,#0` / `popne {r4,r5,r6,pc}`). Con el registro a cero, cada botón se
-tiraba en silencio.
+...and the screen did not change. The cause is inside the dispatcher, at
+`0x0803f3e0` —the function's **21st** instruction, after the chain
+of four comparisons that remaps the key code; an earlier version of
+this paragraph said "one instruction after the entry" and was false—.
+`0x0803f3e0` calls `0x08030d48`, which is a bare `b 0x080634a4`, and from there
+`0x08294f80`, which reads **one byte of PMU register `0x87` over I2C**
+(`mov r0,#0x87` / `and r0,r0,#2` / `lsr r0,r0,#1`) and keeps
+`(byte >> 1) & 1`; `0x080634a4` returns `1 − that` (`rsbs r0,r0,#1` /
+`movcc r0,#0`); and `0x0803f3e4` **returns immediately if it is nonzero**
+(`cmp r0,#0` / `popne {r4,r5,r6,pc}`). With the register at zero, every button was
+silently dropped.
 
-(Y hay una segunda puerta justo detrás, en `0x0803f3ec`, que también hace
-`pop` si un byte de otro bloque vale cero. No estorba —los botones funcionan—
-pero conviene saber que está ahí antes de culpar al interruptor de bloqueo la
-próxima vez.)
+(And there is a second gate right behind it, at `0x0803f3ec`, which also does
+`pop` if a byte from another block is zero. It doesn't get in the way —the buttons work—
+but it is worth knowing it is there before blaming the hold switch the
+next time.)
 
-Rockbox dice qué es ese bit, y llega a la misma polaridad desde el otro lado
+Rockbox says what that bit is, and arrives at the same polarity from the other side
 (`firmware/target/arm/s5l8702/ipod6g/pmu-6g.c:244`):
 
 ```c
@@ -1510,67 +1515,67 @@ pmu_input_holdswitch = !(pmu_read(PCF50635_REG_GPIOSTAT)
                             & PCF50635_GPIOSTAT_GPIO2);
 ```
 
-O sea: **bit puesto = bloqueo desactivado**. El arreglo es una línea en
-`ipod_classic_pmu_reset()`, marcada como VALOR DE CONVENIENCIA: una máquina sin
-interruptor físico que mover tiene que arrancar con él desactivado o no se puede
-usar.
+That is: **bit set = hold off**. The fix is one line in
+`ipod_classic_pmu_reset()`, marked as a CONVENIENCE VALUE: a machine with no
+physical switch to move has to boot with it off or it cannot be
+used.
 
-Y la moraleja, que es la misma del `HI_IRQ`: **el giro no pasa por
-`0x0803f390`**, así que no se veía afectado. El fallo parecía de la rueda y era
-del PMU. Comprobar el camino entero significa comprobarlo para cada tipo de
-evento, no una vez.
+And the moral, which is the same as with `HI_IRQ`: **turning does not go through
+`0x0803f390`**, so it was not affected. The failure looked like the wheel's and was
+the PMU's. Checking the whole path means checking it for each type of
+event, not once.
 
 
-### 17.5 Lo que se ve, medido y mirado
+### 17.5 What is seen, measured and looked at
 
-`sh tools/ipod_classic/navtest.sh`, con `~/6g/E.img`. Teclas: `q`/`e` giran,
-Enter selecciona, `w` es MENU, `a`/`d` son atrás/adelante, `s` es play — las
-mismas del 5G, más las dos que faltaban, para que una sola costumbre valga para
-las dos máquinas.
-
-```
-00-idle             75463 px encendidos
-01-idle-again       75463 px encendidos        0 px distintos
-02-wheel-fwd        75432 px encendidos     8000 px distintos (8000 en la lista, 0 en el panel)
-03-wheel-fwd2       75463 px encendidos     8000 px distintos (8000 en la lista, 0 en el panel)
-04-wheel-back       75432 px encendidos     8000 px distintos (8000 en la lista, 0 en el panel)
-05-select           76800 px encendidos    50540 px distintos (38400 en la lista, 12140 en el panel)
-06-select-later     76800 px encendidos        0 px distintos
-07-menu             76800 px encendidos        0 px distintos
-```
-
-Esa carrera es de una máquina con el arranque limpio (cero reinicios) y **pasa
-todo menos la última línea**: `10-menu-back` se perdió la pulsación de MENU, que
-es el fallo de entrada del §18.8 y no del compositor. **En otras dos carreras
-del mismo test la última línea también pasó**, y con la medida que importa:
+`sh tools/ipod_classic/navtest.sh`, with `~/6g/E.img`. Keys: `q`/`e` turn,
+Enter selects, `w` is MENU, `a`/`d` are back/forward, `s` is play — the
+same as the 5G, plus the two that were missing, so that a single habit works for
+both machines.
 
 ```
-10-menu-back   0 px de diferencia con 08-menu-wheel-back  -> MENU VOLVIO A LA MISMA PANTALLA
-10-menu-back  23 px de diferencia con 08-menu-wheel-back  -> MENU VOLVIO A LA MISMA PANTALLA
+00-idle             75463 px lit
+01-idle-again       75463 px lit        0 px differ
+02-wheel-fwd        75432 px lit     8000 px differ (8000 in the list, 0 in the pane)
+03-wheel-fwd2       75463 px lit     8000 px differ (8000 in the list, 0 in the pane)
+04-wheel-back       75432 px lit     8000 px differ (8000 in the list, 0 in the pane)
+05-select           76800 px lit    50540 px differ (38400 in the list, 12140 in the pane)
+06-select-later     76800 px lit        0 px differ
+07-menu             76800 px lit        0 px differ
 ```
 
-**Cero y veintitrés píxeles** —los 23 son el icono de la batería del §18.7—
-contra los 6 088 que cuesta cambiar de pantalla. No es «cambiaron muchos
-píxeles»: es **el mismo fotograma del que se salió**.
+That run is from a machine with a clean boot (zero reboots) and **passes
+everything but the last line**: `10-menu-back` missed the MENU press, which
+is the input failure of §18.8 and not the compositor's. **In two other runs
+of the same test the last line passed as well**, and with the measurement that matters:
 
-Y **mirado**, que es la otra mitad de la medida:
+```
+10-menu-back   0 px different from 08-menu-wheel-back  -> MENU WENT BACK TO THE SAME SCREEN
+10-menu-back  23 px different from 08-menu-wheel-back  -> MENU WENT BACK TO THE SAME SCREEN
+```
 
-- `00-idle`: la lista de idiomas con la barra azul sobre **English**.
-- `02-wheel-fwd`: la barra sobre **日本語**. Un golpe de `e`, un elemento.
-- `04-wheel-back`: `q` la devuelve a **日本語** desde **Čeština**.
-- `05-select`: **otra pantalla entera** — el icono de la nota musical sobre el
-  degradado gris y el texto **「ミュージックが…」**. Es decir: la selección no
-  sólo cambió de pantalla, cambió al **idioma que estaba resaltado**. Esa
-  coincidencia es lo que convierte "cambiaron muchos píxeles" en "la interfaz
-  hizo lo que se le pidió".
+**Zero and twenty-three pixels** —the 23 are the battery icon from §18.7—
+against the 6 088 it costs to change screen. It is not "many pixels
+changed": it is **the same frame it left from**.
 
-Los **8000 píxeles** son exactamente lo que cuesta mover la barra: dos cajas de
-160×25 encendiéndose y apagándose. El suelo de ruido de esta pantalla es
-**0** —`01-idle-again` lo comprueba en cada carrera antes de creerse nada—, así
-que no hay forma de confundirlo con el reloj de la barra de estado, que además
-esta pantalla no tiene.
+And **looked at**, which is the other half of the measurement:
 
-Del lado del modelo, en la misma carrera:
+- `00-idle`: the language list with the blue bar on **English**.
+- `02-wheel-fwd`: the bar on **日本語**. One press of `e`, one item.
+- `04-wheel-back`: `q` brings it back to **日本語** from **Čeština**.
+- `05-select`: **a whole other screen** — the musical note icon on the
+  gray gradient and the text **「ミュージックが…」**. That is: the selection not
+  only changed screen, it changed to the **language that was highlighted**. That
+  coincidence is what turns "many pixels changed" into "the interface
+  did what it was asked".
+
+The **8000 pixels** are exactly what it costs to move the bar: two 160×25
+boxes turning on and off. The noise floor of this screen is
+**0** —`01-idle-again` checks it on every run before believing anything—, so
+there is no way to confuse it with the status bar clock, which this screen
+doesn't have anyway.
+
+On the model side, in the same run:
 
 ```
 WHEELTRACE first command: tx 0xc000011d -> cmd 0x8000023a
@@ -1580,225 +1585,225 @@ WHEELTRACE totals: 14 packets queued, 0 dropped with the FIFO full,
                    1 commands, 13 rising edges on IRQ 23
 ```
 
-Tres cosas que decir de ahí:
+Three things to say about that:
 
-- **`pend 0x1, mask 0x1`**: la máscara vale 1 y no 0. Es la prueba directa de
-  que la lectura honrada de `WHEELMASK` era lo que faltaba (§17.4).
-- **`1 commands`**: antes eran **cinco** escrituras de `WHEELTX`, los cinco
-  reintentos de `0x0832780c` contra un bloque mudo. Ahora la primera responde.
-- **`0 dropped`**: la FIFO nunca se llenó, o sea que el huésped drena al ritmo
-  al que el modelo produce. Ese contador está puesto justo para que, si algún
-  día el ISR deja de correr, lo diga en vez de dejarnos adivinando.
+- **`pend 0x1, mask 0x1`**: the mask is 1 and not 0. It is the direct proof
+  that honest readback of `WHEELMASK` was what was missing (§17.4).
+- **`1 commands`**: before there were **five** `WHEELTX` writes, the five
+  retries of `0x0832780c` against a mute block. Now the first one gets an answer.
+- **`0 dropped`**: the FIFO never filled up, i.e. the guest drains at the rate
+  the model produces. That counter is there precisely so that, if some
+  day the ISR stops running, it says so instead of leaving us guessing.
 
-Repintados: **unos 420** escrituras de la dirección de origen de la capa 0 en la
-carrera (417 en la del parche, 419 en la de la auditoría: la cuenta depende de
-dónde caiga la captura dentro del doble búfer y **no** es un número exacto que
-reproducir), contra **10** en una carrera en reposo. Lo que importa del dato es
-el orden de magnitud: cuarenta veces más que en reposo.
+Repaints: **about 420** writes of layer 0's source address in the
+run (417 in the patch run, 419 in the audit run: the count depends on
+where the capture lands within the double buffer and is **not** an exact number to
+reproduce), versus **10** in an idle run. What matters about the figure is
+the order of magnitude: forty times more than at rest.
 
-Los ocho contadores de `WHEELTRACE`, en cambio, **sí** son exactos y cuadran con
-las teclas una por una: 14 paquetes = 1 respuesta sondeada del arranque + 3 giros
-× (armado + movimiento + dedo fuera) + Enter (pulsar y soltar) + `w` (pulsar y
-soltar). Y 13 flancos de subida = 14 − 1, porque el paquete del arranque se
-encola con `WHEELMASK` a cero y ése no levanta la línea. Reproducido idéntico en
-la auditoría.
+The eight `WHEELTRACE` counters, on the other hand, **are** exact and match
+the keys one by one: 14 packets = 1 polled reply at boot + 3 turns
+× (arm + movement + finger off) + Enter (press and release) + `w` (press and
+release). And 13 rising edges = 14 − 1, because the boot packet is
+queued with `WHEELMASK` at zero and that one doesn't raise the line. Reproduced identically in
+the audit.
 
-> **Ese «pulsar y soltar = dos paquetes» dejó de ser cierto en el §18.8**, y por
-> una razón medida: dos paquetes por pulsación perdían la pulsación entera
-> siempre que la tarea de rueda no corría entre ellos —seis de cada diez—. Ahora
-> el estado de los botones se **repite** mientras están pulsados y durante
-> 400 ms después de cada flanco, así que la cuenta de paquetes de una carrera
-> con teclas es bastante mayor y ya no se puede predecir a mano. Los giros no
-> cambian.
+> **That "press and release = two packets" stopped being true in §18.8**, and for
+> a measured reason: two packets per press lost the entire press
+> whenever the wheel task did not run between them —six times out of ten—. Now
+> the button state is **repeated** while they are pressed and for
+> 400 ms after each edge, so the packet count of a run
+> with keys is considerably higher and can no longer be predicted by hand. Turns don't
+> change.
 
-### 17.6 Correcciones a lo escrito antes
+### 17.6 Corrections to what was written earlier
 
-1. **§6, §15 y §16: «el huésped sondea la rueda ~120 veces por segundo, así que
-   ya hay quien escuche».** Retirado. El firmware hace **una sola** transacción
-   sondeada en el arranque (con cinco reintentos) y a partir de ahí es
-   **puramente por interrupción**, IRQ 23: registra `0x080479a8` en
-   `0x08047a68` y su tarea se duerme para siempre en `wait_event(5)`. Las miles
-   de lecturas de `+0x14` que se contaban eran el giro de espera de esa única
-   transacción contra un registro que devolvía cero. La conclusión de entonces
-   («ya hay quien escuche») era casualmente correcta; el mecanismo, no. Un
-   modelo que sólo devolviera datos en `WHEELRX` sin levantar la línea no habría
-   producido **ni un solo** evento.
-2. **§15, «lo siguiente en orden de coste», punto 1.** Hecho.
+1. **§6, §15 and §16: "the guest polls the wheel ~120 times per second, so
+   someone is already listening".** Withdrawn. The firmware does **a single**
+   polled transaction at boot (with five retries) and from then on it is
+   **purely interrupt-driven**, IRQ 23: it registers `0x080479a8` at
+   `0x08047a68` and its task goes to sleep forever in `wait_event(5)`. The thousands
+   of `+0x14` reads that were being counted were the wait spin of that single
+   transaction against a register that returned zero. The conclusion back then
+   ("someone is already listening") was correct by coincidence; the mechanism was not. A
+   model that only returned data in `WHEELRX` without raising the line would have
+   produced **not a single** event.
+2. **§15, "next in order of cost", item 1.** Done.
 
-### 17.7 Lo que sigue sin saberse
+### 17.7 What is still unknown
 
-> **RESUELTO en el §18, y los dos primeros puntos de esta lista estaban mal
-> planteados.** «La pantalla que sigue a elegir idioma» era **el menú principal
-> con la lista tapada**: el huésped la dibujaba entera y nuestro compositor le
-> ponía encima una capa que el huésped ya había apagado. Y el panel de
-> «Welcome» **no tiene ninguna regla** que le diga que siga al resaltado: la que
-> se citaba aquí es de otra pantalla. Se dejan escritos tal cual, con lo que se
-> creyó entonces, porque el §12 vive de eso.
+> **RESOLVED in §18, and the first two items on this list were wrongly
+> framed.** "The screen that follows choosing a language" was **the main menu
+> with the list covered**: the guest drew it in full and our compositor put
+> on top of it a layer the guest had already turned off. And the
+> "Welcome" panel **has no rule** telling it to follow the highlight: the one
+> cited here belongs to another screen. They are left written as they were, with what was
+> believed then, because §12 lives off that.
 
-- **MENU no vuelve atrás desde la pantalla que sigue a elegir idioma.** Medido
-  dos veces, con esperas de 15 y de 25 s, y en las dos: **0 píxeles**. Si es
-  porque esa pantalla del primer arranque no tiene a dónde volver, o porque
-  falta algo, es **DESCONOCIDO**. Lo que sí está medido es que la tecla llega
-  entera: con `gdbpoke.py` y breakpoints a lo largo de `0x0803f390`, el código
-  remapeado (`0x6f` para SELECT) atraviesa el despachador, llega a
-  `0x08170e94`, construye el mensaje `'kDwn'` y lo mete en la cola del
-  EventManager, y la suelta hace lo mismo con `'kUp '`. El evento llega; lo que
-  la pantalla decide hacer con él es de la aplicación. **Es el hito que falta.**
+- **MENU does not go back from the screen that follows choosing a language.** Measured
+  twice, with waits of 15 and 25 s, and in both: **0 pixels**. Whether it is
+  because that first-boot screen has nowhere to go back to, or because
+  something is missing, is **UNKNOWN**. What is measured is that the key arrives
+  intact: with `gdbpoke.py` and breakpoints along `0x0803f390`, the
+  remapped code (`0x6f` for SELECT) passes through the dispatcher, reaches
+  `0x08170e94`, builds the `'kDwn'` message and puts it in the
+  EventManager queue, and the release does the same with `'kUp '`. The event arrives; what
+  the screen decides to do with it is up to the application. **It is the missing milestone.**
 
-  **Medido en la auditoría, y estrecha bastante la busca:** esa pantalla **no
-  está sorda**. Con la misma carrera, después de Enter:
+  **Measured in the audit, and it narrows the search considerably:** that screen **is not
+  deaf**. With the same run, after Enter:
 
   ```
-  04-select        76800 px    la nota musical y 「ミュージックが…」
-  05-post-wheel    76800 px   50307 px distintos   <- una `e`, la rueda
-  06-post-menu     76800 px       0 px distintos   <- una `w`, MENU
-  07-post-select   76800 px       0 px distintos   <- otro Enter
+  04-select        76800 px    the musical note and 「ミュージックが…」
+  05-post-wheel    76800 px   50307 px differ      <- one `e`, the wheel
+  06-post-menu     76800 px       0 px differ      <- one `w`, MENU
+  07-post-select   76800 px       0 px differ      <- another Enter
   ```
 
-  La **rueda sí la mueve**: la nota desaparece y queda el degradado liso. Y no
-  es que la animación siga sola, porque en la carrera de `navtest.sh` esa misma
-  pantalla se queda **idéntica** 40 s sin tocar nada (`06-select-later`, 0 px).
-  O sea: la capa de entrada entrega **giros y botones** a esa pantalla, ella
-  reacciona al giro y **decide no hacer nada** con MENU ni con un segundo
-  Enter. Eso apunta a que la pantalla es la del asistente de primer arranque y
-  no tiene a dónde volver, no a que falte nada por debajo — pero sigue siendo
-  **INFERIDO**, no verificado.
+  The **wheel does move it**: the note disappears and the plain gradient remains. And it
+  is not that the animation carries on by itself, because in the `navtest.sh` run that same
+  screen stays **identical** for 40 s without touching anything (`06-select-later`, 0 px).
+  That is: the input layer delivers **turns and buttons** to that screen, it
+  reacts to the turn and **decides to do nothing** with MENU or with a second
+  Enter. That points to the screen being the first-boot assistant's and
+  having nowhere to go back to, not to something missing underneath — but it is still
+  **INFERRED**, not verified.
 
-  Y en la **pantalla de idiomas** MENU tampoco hace nada (0 px), ni `a`
-  (izquierda/anterior): también medido en la auditoría, con esperas de 8 s.
-- **El panel derecho no cambia al girar** (0 píxeles a la derecha en los tres
-  giros). La regla `list.pid.….delayedselected1 -> ShowSetting_Language` dice
-  que debería. Que no se dispare apunta a la mitad temporizada de la interfaz
-  —`TimerEventManager`, `0x081059c4`— y es el hilo más prometedor que queda.
-- **Los bits 1 y 2 de `WHEELPEND`/`WHEELMASK`**, el significado de cada bit de
-  `WHEELCON`, el `0x3A980` de `WHEELDIV` y la orden `0x8000062A`: todos
-  **DESCONOCIDOS**, y ninguno hace falta.
-- **Por qué el hardware real acepta las dos codificaciones de `WHEELTX`**
-  (`0x8000023A` de Rockbox y `0xC000011D` de Apple): **DESCONOCIDO**. El modelo
-  acepta las dos y lo dice en el código.
-- **El ritmo real de la rueda** (los 40 ms del temporizador) es una constante de
-  ajuste, no un dato del aparato. `IPOD_WHEEL_TICK_MS`, `IPOD_WHEEL_UNTOUCH_MS`
-  e `IPOD_WHEEL_STEP` la dejan mover para experimentar.
+  And on the **language screen** MENU doesn't do anything either (0 px), nor does `a`
+  (left/previous): also measured in the audit, with 8 s waits.
+- **The right panel does not change when turning** (0 pixels on the right in all three
+  turns). The rule `list.pid.….delayedselected1 -> ShowSetting_Language` says
+  it should. That it doesn't fire points to the timed half of the interface
+  —`TimerEventManager`, `0x081059c4`— and it is the most promising thread left.
+- **Bits 1 and 2 of `WHEELPEND`/`WHEELMASK`**, the meaning of each bit of
+  `WHEELCON`, the `0x3A980` of `WHEELDIV` and the command `0x8000062A`: all
+  **UNKNOWN**, and none is needed.
+- **Why the real hardware accepts both `WHEELTX` encodings**
+  (Rockbox's `0x8000023A` and Apple's `0xC000011D`): **UNKNOWN**. The model
+  accepts both and says so in the code.
+- **The real pace of the wheel** (the timer's 40 ms) is a tuning
+  constant, not a fact about the device. `IPOD_WHEEL_TICK_MS`, `IPOD_WHEEL_UNTOUCH_MS`
+  and `IPOD_WHEEL_STEP` let it be moved for experimentation.
 
-### 17.8 Regresiones comprobadas
+### 17.8 Regressions checked
 
-| Prueba | Resultado |
+| Test | Result |
 |---|---|
-| `tools/ipod_classic/navtest.sh` | los tres giros dan 8000 px cada uno, y el suelo en reposo sigue siendo 0 |
-| retailOS en reposo, dos capturas seguidas | 0 px de diferencia, igual que antes de la rueda |
-| **`tools/ipod_video/navtest.sh` (el 5G)** | **76 548 px en los siete fotogramas, y el resaltado se mueve: 12 312, 12 114, y ~31 600** (31 602 en la carrera del parche, 31 609 en la de la auditoría). Los dos primeros son estables; el tercero **no lo es y no puede serlo**, porque la pantalla del 5G a la que entra Enter sí tiene reloj —el §15 lo registra como «~31 600» por eso—. Sin regresión |
-| El bloque `0x3C200000` ya no está en `ipod_classic_unimplemented[]` | la ventana modelada son 4 KB, no 1 MB: el resto del bloque sigue cayendo al *io floor* y `-d unimp` lo diría. No lo dice |
-| `stderr` de la carrera entera | ni una excepción, ni un reinicio, ni un `unimp`: quitando `DISPTRACE` y `WHEELTRACE`, la carrera imprime **cuatro** líneas y las cuatro son informativas. Navegar y morir no sería navegar |
+| `tools/ipod_classic/navtest.sh` | the three turns give 8000 px each, and the idle floor is still 0 |
+| retailOS at rest, two consecutive captures | 0 px of difference, same as before the wheel |
+| **`tools/ipod_video/navtest.sh` (the 5G)** | **76 548 px in the seven frames, and the highlight moves: 12 312, 12 114, and ~31 600** (31 602 in the patch run, 31 609 in the audit run). The first two are stable; the third **is not and cannot be**, because the 5G screen that Enter goes into does have a clock —§15 records it as "~31 600" for that reason—. No regression |
+| The `0x3C200000` block is no longer in `ipod_classic_unimplemented[]` | the modeled window is 4 KB, not 1 MB: the rest of the block still falls to the *io floor* and `-d unimp` would say so. It doesn't |
+| `stderr` of the whole run | not one exception, not one reboot, not one `unimp`: leaving out `DISPTRACE` and `WHEELTRACE`, the run prints **four** lines and all four are informational. Navigating and dying would not be navigating |
 
-### 17.9 Cómo reproducirlo
+### 17.9 How to reproduce it
 
 ```bash
 wsl -d Ubuntu-24.04 -e bash -c "cd /mnt/c/Desarrollo/qemu-ios/build && ninja qemu-system-arm"
 
-# el disco, igual que en el sec.15
+# the disk, same as in sec.15
 truncate -s 64M ~/6g/fat32.img && mkfs.vfat -F 32 -n IPOD ~/6g/fat32.img
 python3 tools/ipod_classic/mkdisk6g4k.py ~/6g/E.img \
         assets/extracted/Firmware-24.9.1.2 ~/6g/fat32.img
 
-# la prueba entera: arranca, espera, comprueba que la pantalla esta quieta,
-# pulsa, captura y decide. Sale 0 si los tres giros movieron el resaltado.
+# the whole test: boots, waits, checks that the screen is still,
+# presses, captures and decides. Exits 0 if the three turns moved the highlight.
 sh tools/ipod_classic/navtest.sh
 
-# y MIRAR los PNG que deja en ~/6g/nav, que es la otra mitad
+# and LOOK at the PNGs it leaves in ~/6g/nav, which is the other half
 ```
 
-A mano, para jugar:
+By hand, to play around:
 
 ```bash
 cd build && ./qemu-system-arm -M iPod-Classic \
     -kernel ../assets/classic6g/osos_decrypted.bin -serial null \
     -drive if=ide,format=raw,file=$HOME/6g/E.img -snapshot
-# q / e giran la rueda, Enter selecciona, w es MENU, a / d atras / adelante,
-# s es play. WHEELTRACE=1 cuenta paquetes, ordenes e interrupciones.
+# q / e turn the wheel, Enter selects, w is MENU, a / d back / forward,
+# s is play. WHEELTRACE=1 counts packets, commands and interrupts.
 ```
 
 ---
 
-## 18. La puerta que faltaba: los bits de habilitación de capa, y el menú que sí vuelve (10 de agosto de 2026)
+## 18. The missing gate: the layer enable bits, and the menu that does go back (August 10, 2026)
 
-Los dos síntomas que quedaban abiertos en el §17.7 —**MENU no vuelve atrás** y
-**el panel derecho no sigue al resaltado**— tenían **una sola causa**, y estaba
-en nuestro modelo, no en el firmware de Apple:
+The two symptoms left open in §17.7 —**MENU does not go back** and
+**the right panel does not follow the highlight**— had **a single cause**, and it was
+in our model, not in Apple's firmware:
 
-> `ipod_classic_disp_compose()` dibujaba **toda capa que tuviera dirección de
-> origen**. El huésped, al terminar una transición, **apaga la capa pero deja
-> el descriptor entero puesto**. Desde el primer cambio de pantalla, la **capa
-> 2** —320×240 en (0,0), origen `0x0bfb4ff8`— se quedaba encima de la capa 0
-> **para siempre**, y tapaba la interfaz completa. Las teclas funcionaban; lo
-> que hacían no se veía.
+> `ipod_classic_disp_compose()` drew **every layer that had a source
+> address**. The guest, when finishing a transition, **turns the layer off but leaves
+> the whole descriptor in place**. From the first screen change on, **layer
+> 2** —320×240 at (0,0), source `0x0bfb4ff8`— stayed on top of layer 0
+> **forever**, and covered the entire interface. The keys worked; what
+> they did could not be seen.
 
-Con la puerta puesta, el retailOS **se navega**: menú principal en el idioma
-elegido, la rueda mueve el resaltado **y el panel derecho lo sigue**, SELECT
-entra en Música y **MENU vuelve al fotograma exacto del que se salió**.
+With the gate in place, the retailOS **can be navigated**: main menu in the chosen
+language, the wheel moves the highlight **and the right panel follows it**, SELECT
+enters Music and **MENU returns to the exact frame that was left**.
 
-### 18.1 La medida que lo destapó, y por qué ninguna anterior podía
+### 18.1 The measurement that uncovered it, and why none of the earlier ones could
 
-Las investigaciones anteriores midieron **lo que la pantalla enseñaba**. Ésta
-miró **lo que el huésped había dibujado**. Con la pantalla mostrando la nota
-musical y «No Music» sobre un degradado liso —sin lista y sin barra de título—:
+The earlier investigations measured **what the screen showed**. This one
+looked at **what the guest had drawn**. With the screen showing the musical
+note and "No Music" over a plain gradient —no list and no title bar—:
 
 ```bash
 (qemu) pmemsave 0x08000000 0x04000000 "/tmp/dram.bin"
-# los dos búferes que la capa 0 alterna, sacados del volcado:
+# the two buffers that layer 0 alternates between, taken from the dump:
 python3 tools/ipod_classic/ppm2png.py fb0.bin fb0.png --raw 320x240:argb8888
 ```
 
-`0x09767a24` y `0x089d42d4` contenían **el menú principal completo**: barra
-«iPod» con la batería, la lista (Music, Videos, Photos, Podcasts, Extras,
-Settings, Shuffle Songs) con Music resaltado y su flecha, y el panel derecho
-con la nota y «No Music».
+`0x09767a24` and `0x089d42d4` contained **the complete main menu**: the
+"iPod" bar with the battery, the list (Music, Videos, Photos, Podcasts, Extras,
+Settings, Shuffle Songs) with Music highlighted and its arrow, and the right panel
+with the note and "No Music".
 
-Y `0x0bfb4ff8`, el origen de la **capa 2**, contenía exactamente el fotograma
-que se veía: el degradado con la nota y el texto, **sin lista y sin barra de
-título**.
+And `0x0bfb4ff8`, the source of **layer 2**, contained exactly the frame
+that was visible: the gradient with the note and the text, **without the list and without the title
+bar**.
 
-O sea: **el huésped dibujaba bien; nosotros tapábamos.** Eso convierte «MENU no
-hace nada» en «MENU sí hace, y no se ve», que es otra avería y de otro sitio.
-La trampa nº 4 del método —contar accesos sin mirar qué valores llevan— tiene
-aquí su hermana: **mirar la pantalla sin mirar el búfer**.
+In other words: **the guest was drawing correctly; we were covering it up.** That turns "MENU does
+nothing" into "MENU does something, and it is not visible", which is a different fault from a different place.
+Method trap no. 4 —counting accesses without looking at the values they carry— has
+its sibling here: **looking at the screen without looking at the buffer**.
 
-### 18.2 Dónde está la puerta, con dos pruebas independientes
+### 18.2 Where the gate is, with two independent proofs
 
-**1. El escritor, desensamblado.** `0x081271c8` recibe un índice en `r1` y un
-booleano en `r2`, salta por la tabla de `0x081271d8` y hace `bic` / `orrne`
-sobre la palabra que leyó de `+0x008`, guardándola en `0x08127250`:
+**1. The writer, disassembled.** `0x081271c8` receives an index in `r1` and a
+boolean in `r2`, jumps through the table at `0x081271d8` and does `bic` / `orrne`
+on the word it read from `+0x008`, storing it at `0x08127250`:
 
-| índice | 0 | 1 | 2 | 3 | 4 | 5 |
+| index | 0 | 1 | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|---|
 | bit | `0x40` | `0x20` | `0x10` | `0x08` | `0x04` | `0x80` |
 
-**2. El orden de las escrituras, trazado con `DISPTRACE=1`.** Siempre igual: se
-programa el descriptor, se escribe la **dirección de origen**, y sólo entonces
-se enciende el bit:
+**2. The order of the writes, traced with `DISPTRACE=1`.** Always the same: the
+descriptor is programmed, the **source address** is written, and only then
+is the bit turned on:
 
 ```
-+0x060 = 0x089d42d4  (capa 0)  ...  +0x008: 0x41118101 -> 0x41118141   bit 6
-+0x078 = 0x0be2326c  (capa 1)  ...  +0x008: 0x41118141 -> 0x41118161   bit 5
-+0x090 = 0x0bfb4ff8  (capa 2)  ...  +0x008: 0x41118161 -> 0x41118171   bit 4
++0x060 = 0x089d42d4  (layer 0)  ...  +0x008: 0x41118101 -> 0x41118141   bit 6
++0x078 = 0x0be2326c  (layer 1)  ...  +0x008: 0x41118141 -> 0x41118161   bit 5
++0x090 = 0x0bfb4ff8  (layer 2)  ...  +0x008: 0x41118161 -> 0x41118171   bit 4
 ```
 
-y al acabar la transición los apaga —`0x41118151`, luego `0x41118141`— **sin
-tocar ni la dirección de origen ni el tamaño**. Una pantalla en reposo se queda
-en `0x41118141`: **la capa 0 sola**, que es justo la que lleva el fotograma
-bueno.
+and when the transition ends it turns them off —`0x41118151`, then `0x41118141`— **without
+touching either the source address or the size**. A screen at rest stays
+at `0x41118141`: **layer 0 alone**, which is exactly the one carrying the good
+frame.
 
-**VERIFICADO** por las dos vías y por el resultado: componer sólo la capa 0
-enseña el menú principal, que es lo que el huésped había dibujado.
+**VERIFIED** by both routes and by the result: compositing only layer 0
+shows the main menu, which is what the guest had drawn.
 
-No confundir con los **bits 16, 20 y 24**, que también parecen uno por capa y
-que la versión anterior de `ipod_classic_disp.c` descartó **con razón**: ésos se
-ponen una vez en el init y no se mueven nunca. La puerta son los bits 4..6, que
-se mueven todo el rato. El comentario de entonces decía «y nada más la
-condiciona»; era esa frase la que estaba mal, no el descarte.
+Not to be confused with **bits 16, 20 and 24**, which also look like one per layer and
+which the previous version of `ipod_classic_disp.c` ruled out **rightly**: those are
+set once at init and never move. The gate is bits 4..6, which
+move all the time. The comment back then said "and nothing else gates
+it"; it was that sentence that was wrong, not the ruling-out.
 
-### 18.3 El arreglo
+### 18.3 The fix
 
-`hw/arm/ipod_classic/ipod_classic_disp.c`, en `disp_draw_layer()`:
+`hw/arm/ipod_classic/ipod_classic_disp.c`, in `disp_draw_layer()`:
 
 ```c
 if (k < S5L8702_DISP_NLAYER_GATED &&
@@ -1807,18 +1812,18 @@ if (k < S5L8702_DISP_NLAYER_GATED &&
 }
 ```
 
-con `S5L8702_DISP_LAYER_EN_BIT(k) = 1u << (6 - k)`. Las capas 3 y 4 **no** se
-filtran: no sabemos qué bit las gobierna, ningún arranque ha escrito jamás sus
-descriptores, y por eso caen antes en la comprobación de `src == 0`. Está
-anotado en el código.
+with `S5L8702_DISP_LAYER_EN_BIT(k) = 1u << (6 - k)`. Layers 3 and 4 are **not**
+filtered: we do not know which bit governs them, no boot has ever written their
+descriptors, and that is why they drop out earlier at the `src == 0` check. It is
+noted in the code.
 
-### 18.4 Y entonces, ¿qué pasaba de verdad con MENU?
+### 18.4 So what was really going on with MENU?
 
-Dos cosas distintas, y hay que separarlas.
+Two different things, and they have to be separated.
 
-**En la pantalla de idiomas del primer arranque, MENU no debe hacer nada, y eso
-lo escribió Apple.** Herramienta nueva, `tools/ipod_classic/uirules.py`, que lee
-la tabla de reglas de la interfaz directamente del binario:
+**On the first-boot language screen, MENU must do nothing, and Apple
+wrote it that way.** A new tool, `tools/ipod_classic/uirules.py`, which reads
+the interface rule table directly from the binary:
 
 ```
 $ python3 tools/ipod_classic/uirules.py assets/classic6g/osos_decrypted.bin \
@@ -1827,22 +1832,22 @@ $ python3 tools/ipod_classic/uirules.py assets/classic6g/osos_decrypted.bin \
          (no handler)  (no actions)
 ```
 
-Manejador de longitud 0, cero acciones: una regla **vacía**. En toda la imagen
-hay **108 reglas** `button.menu.up`; **62 hacen algo y 46 no**. Medir MENU ahí
-no mide nada. **VERIFICADO** leyendo los bytes a mano en
-`0x0073e620..0x0073e71d` antes de escribir el analizador, y el formato entero
-está documentado en la cabecera de `uirules.py`.
+Handler of length 0, zero actions: an **empty** rule. In the whole image
+there are **108** `button.menu.up` **rules**; **62 do something and 46 do not**. Measuring MENU there
+measures nothing. **VERIFIED** by reading the bytes by hand at
+`0x0073e620..0x0073e71d` before writing the parser, and the whole format
+is documented in the header of `uirules.py`.
 
-**En cualquier pantalla que sí tenga a dónde volver, MENU vuelve.** Medido en el
+**On any screen that does have somewhere to go back to, MENU goes back.** Measured in
 §18.6.
 
-### 18.5 Con el panel derecho, lo mismo
+### 18.5 Same with the right panel
 
-La regla que el §17.7 daba por incumplida,
-`list.pid.….delayedselected1 -> ShowSetting_Language`, **no es de esta
-pantalla**: es de `list.pid.229444534`, el elemento «Idioma» del **menú de
-Ajustes**. La lista del primer arranque es `list.pid.229444595`, que aparece
-**una sola vez en los 9,9 MB de la imagen** y **sólo** con `.chosen1`:
+The rule that §17.7 considered unfulfilled,
+`list.pid.….delayedselected1 -> ShowSetting_Language`, **does not belong to this
+screen**: it belongs to `list.pid.229444534`, the "Language" item of the **Settings
+menu**. The first-boot list is `list.pid.229444595`, which appears
+**only once in the 9.9 MB of the image** and **only** with `.chosen1`:
 
 ```
 $ uirules.py osos_decrypted.bin --grep 229444595 --raw
@@ -1851,251 +1856,251 @@ $ uirules.py osos_decrypted.bin --grep 229444595 --raw
          navigator.PopToMainScreen()
 ```
 
-No hay **ninguna** regla que diga que el panel de «Welcome» siga al resaltado.
-**VERIFICADO**, búsqueda exhaustiva.
+There is **no** rule saying that the "Welcome" panel follows the highlight.
+**VERIFIED**, exhaustive search.
 
-Donde el firmware **sí** lo dice es en el **menú principal**: 48 reglas
-`list.pid.2294433NN.delayedselected`, 24 de ellas con
-`navigator.SwitchLayout(MainMenus_Main_Screen_XXX)` y el resto con manejadores
-`Handle…Hilited`. Y ahí, ahora, **lo sigue**: un clic de rueda mueve la barra
-unos 7 950 px en la lista **y** repinta unos 7 200 px del panel, que pasa de la
-nota musical de «ミュージック» a la tira de película de «ビデオ». Mirado, no
-sólo contado.
+Where the firmware **does** say so is in the **main menu**: 48
+`list.pid.2294433NN.delayedselected` rules, 24 of them with
+`navigator.SwitchLayout(MainMenus_Main_Screen_XXX)` and the rest with
+`Handle…Hilited` handlers. And there, now, **it follows**: one wheel click moves the bar
+about 7 950 px in the list **and** repaints about 7 200 px of the panel, which goes from the
+musical note of "ミュージック" to the film strip of "ビデオ". Looked at, not
+just counted.
 
-Y de paso: `delayedselected` es la mitad **temporizada** de la interfaz, la que
-el §17.7 sospechaba muerta. Está viva, y ahora se ve.
+And incidentally: `delayedselected` is the **timed** half of the interface, the one
+§17.7 suspected was dead. It is alive, and now it shows.
 
-### 18.6 Lo que se ve ahora, medido y mirado
+### 18.6 What is visible now, measured and looked at
 
-`sh tools/ipod_classic/navtest.sh`, ampliado para llegar al menú principal y
-probar MENU allí:
+`sh tools/ipod_classic/navtest.sh`, extended to reach the main menu and
+test MENU there:
 
 ```
-00-idle               75463 px encendidos
-01-idle-again         75463 px encendidos        0 px distintos (0 en la lista, 0 en el panel)
-02-wheel-fwd          75432 px encendidos     8000 px distintos (8000 en la lista, 0 en el panel)
-03-wheel-fwd2         75463 px encendidos     8428 px distintos (8428 en la lista, 0 en el panel)
-04-wheel-back         75432 px encendidos     8000 px distintos (8000 en la lista, 0 en el panel)
-05-select             76074 px encendidos    19503 px distintos (12842 en la lista, 6661 en el panel)
-06-menu-idle          76074 px encendidos      875 px distintos (0 en la lista, 875 en el panel)
-07-menu-wheel         76046 px encendidos    15028 px distintos (7952 en la lista, 7076 en el panel)
-08-menu-wheel-back    76074 px encendidos    15151 px distintos (7975 en la lista, 7176 en el panel)
-09-into-music         75802 px encendidos     7045 px distintos (6088 en la lista,  957 en el panel)
-10-menu-back          75802 px encendidos      933 px distintos (0 en la lista, 933 en el panel)   <- MENU se perdio en ESTA carrera
+00-idle               75463 px lit
+01-idle-again         75463 px lit        0 px differ (0 in the list, 0 in the pane)
+02-wheel-fwd          75432 px lit     8000 px differ (8000 in the list, 0 in the pane)
+03-wheel-fwd2         75463 px lit     8428 px differ (8428 in the list, 0 in the pane)
+04-wheel-back         75432 px lit     8000 px differ (8000 in the list, 0 in the pane)
+05-select             76074 px lit    19503 px differ (12842 in the list, 6661 in the pane)
+06-menu-idle          76074 px lit      875 px differ (0 in the list, 875 in the pane)
+07-menu-wheel         76046 px lit    15028 px differ (7952 in the list, 7076 in the pane)
+08-menu-wheel-back    76074 px lit    15151 px differ (7975 in the list, 7176 in the pane)
+09-into-music         75802 px lit     7045 px differ (6088 in the list, 957 in the pane)
+10-menu-back          75802 px lit      933 px differ (0 in the list, 933 in the pane)   <- MENU was lost in THIS run
 
-  suelo de la pantalla de idiomas: 0 px (limite 200)
-  suelo de la LISTA del menu principal: 0 px (limite 200)
+  floor of the language screen: 0 px (limit 200)
+  floor of the main menu LIST: 0 px (limit 200)
 
-VEREDICTO
-  02-wheel-fwd           8000 px  -> el resaltado se movio
-  03-wheel-fwd2          8428 px  -> el resaltado se movio
-  04-wheel-back          8000 px  -> el resaltado volvio
-  05-select             19503 px  -> SELECT cambio la pantalla
-  07-menu-wheel        lista  7952 px + panel  7076 px  -> el resaltado se movio Y el panel lo siguio
-  08-menu-wheel-back   lista  7975 px + panel  7176 px  -> el resaltado se movio Y el panel lo siguio
-  09-into-music          7045 px  -> SELECT entro en Musica
-  11-menu-at-top       lista     0 px + panel   875 px  -> no navego, que es lo que toca
+VERDICT
+  02-wheel-fwd           8000 px  -> the highlight moved
+  03-wheel-fwd2          8428 px  -> the highlight moved
+  04-wheel-back          8000 px  -> the highlight came back
+  05-select             19503 px  -> SELECT changed the screen
+  07-menu-wheel        list  7952 px + pane  7076 px  -> the highlight moved AND the pane followed it
+  08-menu-wheel-back   list  7975 px + pane  7176 px  -> the highlight moved AND the pane followed it
+  09-into-music          7045 px  -> SELECT entered Music
+  11-menu-at-top       list     0 px + pane   875 px  -> did not navigate, which is correct
 ```
 
-Y **mirado**, que es la otra mitad de la medida:
+And **looked at**, which is the other half of the measurement:
 
-- `05-select`: el **menú principal** en japonés —ミュージック, ビデオ, 写真,
-  Podcast, エクストラ, 設定, 曲をシャッフル— porque 日本語 era el idioma
-  resaltado. Es la misma prueba de «hizo lo que se le pidió» que ya daba
-  SELECT. En otra carrera, con **Čeština** resaltado, salió *Hudba, Videa,
-  Fotografie, Podcasty, Dodatky, Nastavení, Náhodná hudba* y el panel dijo
+- `05-select`: the **main menu** in Japanese —ミュージック, ビデオ, 写真,
+  Podcast, エクストラ, 設定, 曲をシャッフル— because 日本語 was the highlighted
+  language. It is the same "it did what it was asked" proof that SELECT
+  already gave. In another run, with **Čeština** highlighted, it came out as *Hudba, Videa,
+  Fotografie, Podcasty, Dodatky, Nastavení, Náhodná hudba* and the panel said
   *Žádná*.
-- `07-menu-wheel`: la barra sobre **ビデオ** y el panel derecho con la **tira de
-  película**.
-- `09-into-music`: la pantalla de **Música** (Cover Flow, プレイリスト,
+- `07-menu-wheel`: the bar on **ビデオ** and the right panel with the **film
+  strip**.
+- `09-into-music`: the **Music** screen (Cover Flow, プレイリスト,
   アーティスト, アルバム, コンピレーション, 曲, ジャンル, 作曲者,
   オーディオブック).
-- `10-menu-back`: **el menú principal otra vez**, y el mismo fotograma que
+- `10-menu-back`: **the main menu again**, and the same frame as
   `08-menu-wheel-back`.
 
-El veredicto fuerte no es el tamaño del cambio sino **a dónde va**:
-`10-menu-back` se compara contra `08-menu-wheel-back`, el fotograma del que se
-salió. «Cambiaron muchos píxeles» no demuestra que se vuelva; «volvió al
-fotograma del que salimos» sí.
+The strong verdict is not the size of the change but **where it goes**:
+`10-menu-back` is compared against `08-menu-wheel-back`, the frame that was
+left. "Many pixels changed" does not prove that it goes back; "it returned to the
+frame we left" does.
 
-### 18.7 El suelo de ruido: dos cosas se mueven solas, y las dos deben
+### 18.7 The noise floor: two things move on their own, and both should
 
-`navtest.sh` suspendía la carrera si dos capturas seguidas de una pantalla
-quieta diferían en algo. Ya no vale tal cual, y las dos razones están medidas:
+`navtest.sh` failed the run if two consecutive captures of a still
+screen differed at all. That no longer holds as-is, and both reasons are measured:
 
-1. **El icono de batería**: **23 px** en `x=145..151, y=4..13`, con el verde de
-   la carga entre los colores. Se repinta cuando le parece: una carrera de este
-   script midió 0 px ahí y la siguiente 23.
-2. **La etiqueta del panel del menú principal**: unos **960 px** en
-   `x=184..293, y=165..182`, o sea las **dos líneas de texto bajo el icono**.
-   La etiqueta japonesa 「ミュージックがありません」 no cabe en una línea y **se
-   desplaza sola**. La mitad izquierda de esos mismos fotogramas difiere en
+1. **The battery icon**: **23 px** at `x=145..151, y=4..13`, with the charging
+   green among the colors. It repaints whenever it feels like it: one run of this
+   script measured 0 px there and the next 23.
+2. **The main menu panel's label**: about **960 px** at
+   `x=184..293, y=165..182`, i.e. the **two lines of text under the icon**.
+   The Japanese label 「ミュージックがありません」 does not fit on one line and **scrolls
+   on its own**. The left half of those same frames differs by
    **0 px**.
 
-Así que el suelo se comprueba contra un **límite de 200 px** en vez de contra
-cero, se **imprime siempre** el valor medido, y el menú principal se enrasa
-**sólo por su lista**. Mover el resaltado cuesta 8 000 px, cuarenta veces el
-límite, y el umbral más bajo de todo el veredicto pide 3 000: no hay solape.
+So the floor is checked against a **200 px limit** instead of against
+zero, the measured value is **always printed**, and the main menu is levelled
+**by its list only**. Moving the highlight costs 8 000 px, forty times the
+limit, and the lowest threshold in the whole verdict asks for 3 000: there is no overlap.
 
-### 18.8 La otra mitad del problema: un botón que se enviaba UNA vez, y una pérdida que sigue abierta
+### 18.8 The other half of the problem: a button that was sent ONCE, and a loss that remains open
 
-Con la pantalla ya visible salió a la luz algo que antes no se podía ni medir:
-**SELECT y MENU se pierden a veces**. Prueba dedicada —entrar en Música y salir,
-cinco veces, una pulsación cada 13 s, `~/6g/inout`—:
+With the screen now visible, something came to light that could not even be measured before:
+**SELECT and MENU are sometimes lost**. A dedicated test —enter Music and leave,
+five times, one press every 13 s, `~/6g/inout`—:
 
 ```
-carrera 1 (modelo de entonces)   in1 6343 | out1    0 | in2    0 | out2 6343
+run 1 (model at the time)        in1 6343 | out1    0 | in2    0 | out2 6343
                                  in3    0 | out3    0 | in4 6343 | out4 6343
                                  in5    0 | out5    0
 WHEELTRACE totals: 23 packets queued, 0 dropped, 1 commands, 22 rising edges
 ```
 
-**23 paquetes es exactamente lo esperado** —1 del sondeo de arranque + 11
-pulsaciones × 2 flancos— y **0 descartados**. El modelo entregó todo y el
-huésped hizo caso a cuatro de ocho pulsaciones con destino. Nada en el modelo
-distingue las que funcionaron de las que no.
+**23 packets is exactly what is expected** —1 from the boot probe + 11
+presses × 2 edges— and **0 dropped**. The model delivered everything and the
+guest heeded four of eight presses that had a destination. Nothing in the model
+distinguishes the ones that worked from the ones that did not.
 
-**Lo que sí se encontró y se ha arreglado** es la *constraint 2* del §17.3
-aplicada a los botones, que era la mitad que se había quedado exenta:
+**What was found and has been fixed** is *constraint 2* of §17.3
+applied to the buttons, which was the half that had been left exempt:
 
-> El ISR sobrescribe el mismo bloque de estado en cada paquete. Una pulsación
-> eran **exactamente dos paquetes**, uno con el bit puesto y otro con el bit
-> quitado. Y el retailOS actúa **al soltar** —sus reglas se llaman
-> `button.menu.up` y `button.select.up`—, así que necesita que la tarea de
-> rueda corra y vea el bit **puesto**, y vuelva a correr y lo vea **quitado**.
-> Si la tarea no corre en ese hueco, la pulsación entera desaparece sin dejar
-> rastro.
+> The ISR overwrites the same status block on every packet. A press
+> was **exactly two packets**, one with the bit set and another with the bit
+> cleared. And the retailOS acts **on release** —its rules are called
+> `button.menu.up` and `button.select.up`—, so it needs the wheel task
+> to run and see the bit **set**, and run again and see it **cleared**.
+> If the task does not run in that gap, the whole press disappears without a
+> trace.
 
-El aparato de verdad no tiene ese problema porque **transmite**: mientras algo
-pasa informa a su ritmo, y el estado de los botones va en **todos** los
-paquetes. Ahora el modelo también (`S5L8702_WHEEL_BTN_REPEAT_MS`, 400 ms, diez
-ticks; ajustable con `IPOD_WHEEL_BTN_REPEAT_MS`): repite el estado un paquete
-por tick mientras hay un botón pulsado y durante la ventana posterior a cada
-flanco, para que el de subida reciba el mismo trato que el de bajada.
+The real device does not have that problem because it **streams**: while something
+is happening it reports at its own pace, and the button state goes in **every**
+packet. Now the model does too (`S5L8702_WHEEL_BTN_REPEAT_MS`, 400 ms, ten
+ticks; adjustable with `IPOD_WHEEL_BTN_REPEAT_MS`): it repeats the state one packet
+per tick while a button is pressed and during the window after each
+edge, so that the rising edge gets the same treatment as the falling one.
 
-Dos carreras más, ya con la repetición:
+Two more runs, now with the repetition:
 
 ```
-carrera 2   in1 0 | out1 0 | in2 0 | out2 0 | in3 0 | out3 0
-            in4 6343 | out4 6343 | in5 6343 | out5 6343      (134 paquetes, 0 descartados)
-carrera 3   in1 6343 | out1 6665 | in2 0 | out2 322 | in3 6343 | out3 6343
-            in4 6343 | out4 6343 | in5 0 | out5 0            (134 paquetes, 0 descartados)
+run 2       in1 0 | out1 0 | in2 0 | out2 0 | in3 0 | out3 0
+            in4 6343 | out4 6343 | in5 6343 | out5 6343      (134 packets, 0 dropped)
+run 3       in1 6343 | out1 6665 | in2 0 | out2 322 | in3 6343 | out3 6343
+            in4 6343 | out4 6343 | in5 0 | out5 0            (134 packets, 0 dropped)
 ```
 
-Contando **sólo las pulsaciones que tenían a dónde ir**:
+Counting **only the presses that had somewhere to go**:
 
-| | SELECT desde el menú principal | MENU desde la pantalla de Música |
+| | SELECT from the main menu | MENU from the Music screen |
 |---|---|---|
-| sin repetición (carrera 1) | 1 de 3 | 2 de 3 |
-| con repetición (carreras 2 y 3) | 5 de 10 | **5 de 5** |
+| without repetition (run 1) | 1 of 3 | 2 of 3 |
+| with repetition (runs 2 and 3) | 5 of 10 | **5 of 5** |
 
-**Lo honesto es decir las dos cosas.** La repetición **elimina un modo de fallo
-que el modelo tenía demostradamente** —dos paquetes por pulsación contra un ISR
-que sobrescribe su bloque de estado— y **MENU no ha fallado ni una vez** desde
-que está. Pero **no arregla la pérdida de SELECT**, que sigue ahí, y por tanto
-**la pérdida tiene otra causa que no está encontrada**. No se vende como
-arreglada.
+**The honest thing is to say both.** The repetition **eliminates a failure mode
+that the model demonstrably had** —two packets per press against an ISR
+that overwrites its status block— and **MENU has not failed even once** since
+it has been in place. But **it does not fix the SELECT loss**, which is still there, and therefore
+**the loss has another cause that has not been found**. It is not being sold as
+fixed.
 
-**El sospechoso número uno para lo que queda**, y es donde miraría el siguiente:
-la puerta del §17.4. El despachador de teclas lee por I2C el registro `0x87` del
-PMU **en cada tecla** y **se vuelve sin hacer nada** si el bit sale distinto de
-cero (`0x0803f3e0` → `0x08294f80`, y el `popne` de `0x0803f3e4`). Una lectura
-que devuelva otra cosa —el modelo del PMU tiene un puntero de registro que
-autoincrementa y se comparte entre transacciones, `ipod_classic_pmu.c:131`— tira
-la tecla en silencio y con exactamente esta pinta. El experimento: punto de
-ruptura en `0x0803f3e4` con `evtrace.py`, leer `r0` en cada pulsación y ver si
-las perdidas son las que traen `r0 != 0`. **No está hecho.**
+**The number-one suspect for what remains**, and it is where I would look next:
+the gate from §17.4. The key dispatcher reads the PMU's register `0x87` over I2C
+**on every key** and **returns without doing anything** if the bit comes out non-zero
+(`0x0803f3e0` → `0x08294f80`, and the `popne` at `0x0803f3e4`). A read
+that returns something else —the PMU model has a register pointer that
+auto-increments and is shared between transactions, `ipod_classic_pmu.c:131`— drops
+the key silently and with exactly this look. The experiment: a breakpoint
+at `0x0803f3e4` with `evtrace.py`, read `r0` on each press and see whether
+the lost ones are those carrying `r0 != 0`. **It has not been done.**
 
-Consecuencia práctica inmediata: `navtest.sh` puede suspender por esto sin que
-nada se haya roto. Si suspende **sólo** en `09-into-music`, repítelo antes de
-buscar culpables.
+Immediate practical consequence: `navtest.sh` can fail because of this without
+anything having broken. If it fails **only** at `09-into-music`, repeat it before
+looking for culprits.
 
-### 18.9 Una trampa de método que costó dos carreras: los QEMU huérfanos
+### 18.9 A method trap that cost two runs: orphaned QEMUs
 
-Dos carreras seguidas de `navtest.sh` fallaron con la pantalla en negro y
-**116 y 68** líneas de `guest asked for a software reset (SWRCON = 0xaa5),
-next image "diskmode"` en `stderr`. No era el parche. Era esto:
+Two consecutive runs of `navtest.sh` failed with the screen black and
+**116 and 68** lines of `guest asked for a software reset (SWRCON = 0xaa5),
+next image "diskmode"` on `stderr`. It was not the patch. It was this:
 
 ```
 $ ps aux | grep qemu
-... 24 procesos qemu-evt de una sesion anterior, al 80 % de CPU cada uno
+... 24 qemu-evt processes from an earlier session, at 80 % CPU each
 $ uptime
-load average: 16.00     # en 12 nucleos
+load average: 16.00     # on 12 cores
 ```
 
-`navtest.sh` hace `pkill -9 -x qemu-system-arm`, que por diseño **no** toca un
-binario llamado de otra forma —la copia privada `~/evt/qemu-evt` que usa
-`evtrace.py` existe justamente para que una sesión no mate a otra—. El precio
-es el simétrico: **los huérfanos no se limpian solos**. Con la máquina así de
-cargada el huésped no llega a tiempo a sus propios plazos de arranque y se
-reinicia a *diskmode* en bucle.
+`navtest.sh` does `pkill -9 -x qemu-system-arm`, which by design does **not** touch a
+binary named differently —the private copy `~/evt/qemu-evt` used by
+`evtrace.py` exists precisely so that one session does not kill another—. The price
+is the symmetric one: **orphans are not cleaned up on their own**. With the machine that heavily
+loaded the guest does not meet its own boot deadlines in time and
+reboots into *diskmode* in a loop.
 
-Antes de creerse un fallo intermitente: `ps aux | grep qemu` y `uptime`.
+Before believing an intermittent failure: `ps aux | grep qemu` and `uptime`.
 
-**Pero no todo es carga, y esto es nuevo.** Con la máquina vacía —carga 0,4, un
-solo QEMU, 7 GB de memoria libre— dos carreras seguidas se reiniciaron **1 y 3
-veces**, y el reinicio cae **entre los 48 y los 52 s**, o sea **antes de la
-primera tecla**. La huella en las capturas es exactamente la que la
-investigación de eventos describió sin nombre: donde debería estar la lista de
-idiomas aparece la pantalla **Low Battery** (76 797 px) y poco después **negro**
-(0 px). Ahora tiene nombre, porque `stderr` lo dice:
+**But not everything is load, and this is new.** With the machine empty —load 0.4, a
+single QEMU, 7 GB of free memory— two consecutive runs rebooted **1 and 3
+times**, and the reboot falls **between 48 and 52 s**, i.e. **before the
+first key**. The footprint in the captures is exactly the one the
+events investigation described without naming it: where the language list
+should be, the **Low Battery** screen appears (76 797 px) and shortly afterwards **black**
+(0 px). Now it has a name, because `stderr` says it:
 
 ```
 qemu-system-arm: warning: S5L8702: guest asked for a software reset
                  (SWRCON = 0xaa5), next image "diskmode"
 ```
 
-O sea: **la pantalla «Low Battery» de los 46 s y el reinicio a modo disco son
-el mismo suceso**. Sigue sin explicación —el ADC del PMU devuelve 844 de 1023,
-que no es poca batería (`ipod_classic_pmu.c:47`), así que el disparador es otra
-cosa—, pero ya no es un misterio sin bordes: es un camino concreto del huésped
-que decide reiniciarse a `diskmode`, y por dónde empezar es por qué registro del
-PMU lee antes de decidirlo.
+In other words: **the "Low Battery" screen at 46 s and the reboot into disk mode are
+the same event**. It remains unexplained —the PMU's ADC returns 844 of 1023,
+which is not low battery (`ipod_classic_pmu.c:47`), so the trigger is something
+else—, but it is no longer a mystery without edges: it is a concrete guest path
+that decides to reboot into `diskmode`, and the place to start is which PMU
+register it reads before deciding so.
 
-Por eso `navtest.sh` cuenta ahora esos reinicios y **avisa a gritos** cuando hay
-alguno: una carrera que se reinicia tiene todos los tiempos corridos y su
-veredicto no vale para nada. Repítela.
+That is why `navtest.sh` now counts those reboots and **warns loudly** when there is
+any: a run that reboots has all its timings shifted and its
+verdict is worthless. Repeat it.
 
-### 18.10 Regresiones comprobadas
+### 18.10 Regressions checked
 
-| Prueba | Resultado |
+| Test | Result |
 |---|---|
-| `navtest.sh`, la mitad de siempre: los tres giros en la pantalla de idiomas | **8 000, 8 428 y 8 000 px**, y el suelo en **0 px**. Las mismas cifras del §17.8 (los 428 de más son el icono de batería del §18.7). Sin regresión |
-| `navtest.sh`, la mitad nueva | el menú principal aparece, sus dos mitades se mueven juntas, SELECT entra en Música y MENU vuelve al mismo fotograma. Ver §18.6 |
-| **`tools/ipod_video/navtest.sh` (el 5G)** | **76 548 px en los siete fotogramas y el resaltado se mueve: 12 312, 12 114 y 31 598.** Los dos primeros, clavados a los del §17.8; el tercero cae en el «~31 600» que esa misma tabla ya registraba como no reproducible al píxel porque esa pantalla tiene reloj. **Sin regresión** |
-| retailOS **sin disco** | **0 px**, `CPU_exception_handler` y el reinicio por software de siempre: el ciclo de caída del §4, igual que antes. El compositor no compone porque nadie le da dirección de origen, y ahora tampoco porque nadie enciende una capa |
-| `tools/ipod_classic/lcdtest.S` | no programa ninguna capa, así que la puerta no decide nada para él: sigue pintando por el puerto de datos del panel |
-| Migración | `vmstate_ipod_classic_wheel` pasa a versión 2 al añadir `button_repeat_until`. Nada migra esta máquina hoy, así que el formato viejo no se mantiene vivo |
+| `navtest.sh`, the usual half: the three turns on the language screen | **8 000, 8 428 and 8 000 px**, and the floor at **0 px**. The same figures as §17.8 (the extra 428 are the battery icon from §18.7). No regression |
+| `navtest.sh`, the new half | the main menu appears, its two halves move together, SELECT enters Music and MENU returns to the same frame. See §18.6 |
+| **`tools/ipod_video/navtest.sh` (the 5G)** | **76 548 px in all seven frames and the highlight moves: 12 312, 12 114 and 31 598.** The first two, spot on with those of §17.8; the third falls on the "~31 600" that the same table already recorded as not pixel-reproducible because that screen has a clock. **No regression** |
+| retailOS **without a disk** | **0 px**, `CPU_exception_handler` and the usual software reset: the crash cycle of §4, same as before. The compositor does not composite because nobody gives it a source address, and now also because nobody turns on a layer |
+| `tools/ipod_classic/lcdtest.S` | it does not program any layer, so the gate decides nothing for it: it keeps painting through the panel's data port |
+| Migration | `vmstate_ipod_classic_wheel` moves to version 2 with the addition of `button_repeat_until`. Nothing migrates this machine today, so the old format is not kept alive |
 
-### 18.11 Lo que sigue sin saberse
+### 18.11 What is still unknown
 
-- **El byte bajo de `LAYERn_CFG`** (`+0x0d8`, `+0x0e0`, `+0x0e8`) vale `0xff` en
-  las capas 0 y 1 y **`0x00`** en la capa 2, en las 106 escrituras de una
-  carrera. Parece una **alfa constante**, y si lo es, la capa 2 es invisible
-  incluso mientras su bit de habilitación está puesto. **No se modela**: el bit
-  ya explica el síntoma entero, y esto sólo afectaría a los fotogramas **de
-  mitad de transición**. **INFERIDO**, sin resolver. Si algún día una
-  transición se ve tapada un instante, es esto.
-- **Los campos de 4 bits de `LAYERn_CFG` en `[31:28]` y `[15:12]`**, que
-  `0x081278fc` escribe en parejas `(1,0)`, `(0,1)`, `(5,4)`, `(9,8)`, `(11,10)`:
-  parecen modos de mezcla. **DESCONOCIDOS**, y no hacen falta.
-- **Los índices 3, 4 y 5 del escritor de `CONTROL`** (bits `0x08`, `0x04`,
-  `0x80`): sólo se ve usado el 5, dos veces en una carrera entera.
-  **DESCONOCIDOS**.
-- **Las capas 3 y 4**: nadie las programa y no se les conoce bit.
-- **El byte de sufijo de cada disparador** en la tabla de reglas: es ASCII y
-  vale `'1'` en las 1 380 reglas de la imagen. **DESCONOCIDO** para qué es.
-- **La pantalla «Low Battery» intermitente** de los 46 s sigue sin explicación
-  propia; ver la sospecha del §18.9.
+- **The low byte of `LAYERn_CFG`** (`+0x0d8`, `+0x0e0`, `+0x0e8`) is `0xff` in
+  layers 0 and 1 and **`0x00`** in layer 2, across the 106 writes of one
+  run. It looks like a **constant alpha**, and if it is, layer 2 is invisible
+  even while its enable bit is set. **It is not modeled**: the bit
+  already explains the whole symptom, and this would only affect the frames **in the
+  middle of a transition**. **INFERRED**, unresolved. If someday a
+  transition looks covered for an instant, this is it.
+- **The 4-bit fields of `LAYERn_CFG` at `[31:28]` and `[15:12]`**, which
+  `0x081278fc` writes in pairs `(1,0)`, `(0,1)`, `(5,4)`, `(9,8)`, `(11,10)`:
+  they look like blend modes. **UNKNOWN**, and not needed.
+- **Indices 3, 4 and 5 of the `CONTROL` writer** (bits `0x08`, `0x04`,
+  `0x80`): only 5 is seen in use, twice in an entire run.
+  **UNKNOWN**.
+- **Layers 3 and 4**: nobody programs them and no bit is known for them.
+- **The suffix byte of each trigger** in the rule table: it is ASCII and
+  is `'1'` in all 1 380 rules of the image. What it is for is **UNKNOWN**.
+- **The intermittent "Low Battery" screen** at 46 s still has no
+  explanation of its own; see the suspicion in §18.9.
 
 ---
 
-## 19. Quinta auditoría independiente: el temporizador, medido de una vez (10 de agosto de 2026)
+## 19. Fifth independent audit: the timer, measured once and for all (August 10, 2026)
 
-La tanda del §18 dejó `tools/ipod_classic/tests/timer_audit.c` en el árbol **sin
-escribir en ninguna parte lo que la prueba contesta**. Esta sección lo arregla:
-la prueba se ejecutó, dice cinco cosas, y **tres de ellas son fallos del
-modelo**.
+The §18 batch left `tools/ipod_classic/tests/timer_audit.c` in the tree **without
+writing down anywhere what the test answers**. This section fixes that:
+the test was run, it says five things, and **three of them are model
+bugs**.
 
 ```
 $ sh tools/ipod_classic/tests/build.sh
@@ -2103,50 +2108,50 @@ $ ./build/qemu-system-arm -M iPod-Classic -kernel assets/tests/timer_audit.bin \
       -display none -monitor none -serial stdio
 ```
 
-### 19.1 La hipótesis de partida queda REFUTADA, y con la medida en la mano
+### 19.1 The starting hypothesis is REFUTED, with the measurement in hand
 
-La orden de trabajo traía una sospecha fuerte heredada de una auditoría
-anterior: «`TBCNT` no avanza en el modelo, lee `0x1` dos veces», y de ahí que
-cualquier cosa **retardada** —`delayedselected`, `TimerEventManager`— se quedase
-esperando para siempre. **No es cierto.** Los tres contadores libres avanzan, y
-**a la frecuencia correcta**, que es la mitad que de verdad importa:
+The work order came with a strong suspicion inherited from a previous
+audit: "`TBCNT` does not advance in the model, it reads `0x1` twice", and hence
+anything **delayed** —`delayedselected`, `TimerEventManager`— would be left
+waiting forever. **It is not true.** All three free-running counters advance, and
+**at the correct frequency**, which is the half that really matters:
 
-| contador | programado | medido en 200 ms | esperado | error |
+| counter | programmed | measured in 200 ms | expected | error |
 |---|---|---|---|---|
-| `TECNT` | 1 MHz (`ECLK/12`) | 200 091 | 200 000 | +0,05 % |
-| `TFCNT` | 12 MHz (`ECLK/1`) | 2 401 271 | 2 400 000 | +0,05 % |
-| `TGCNT` | 10 kHz (`ECLK/16/75`) | 2 001 | 2 000 | +0,05 % |
+| `TECNT` | 1 MHz (`ECLK/12`) | 200 091 | 200 000 | +0.05 % |
+| `TFCNT` | 12 MHz (`ECLK/1`) | 2 401 271 | 2 400 000 | +0.05 % |
+| `TGCNT` | 10 kHz (`ECLK/16/75`) | 2 001 | 2 000 | +0.05 % |
 
-Y `tools/ipod_classic/tests/timer_irq.c`, el que dio pie a la sospecha, hoy
-imprime `counter runs: yes 0x00000003 0x00000004`.
+And `tools/ipod_classic/tests/timer_irq.c`, the one that gave rise to the suspicion, today
+prints `counter runs: yes 0x00000003 0x00000004`.
 
-**Y no es un contador cualquiera: es el que usa el retailOS.** Buscando el
-literal de la base del bloque en la imagen (`findlit.py ... 3C700000`) salen
-tres sitios, y dos son el temporizador E:
+**And it is not just any counter: it is the one the retailOS uses.** Searching for the
+block base literal in the image (`findlit.py ... 3C700000`) yields
+three places, and two of them are timer E:
 
 ```
 0x08324e48   TECON   = 0x440        (ECLK, /1)
              TEPRE   = 11           -> 12 MHz / 12 = 1 MHz
-             TEDATA0 = 0xffffffff   (libre)
+             TEDATA0 = 0xffffffff   (free-running)
              TECMD   = 3            (CLR | EN)
-0x08324e38   ldr r0, [r0, #0xb4]    <- lee TECNT, y no hace nada mas
+0x08324e38   ldr r0, [r0, #0xb4]    <- reads TECNT, and does nothing else
 ```
 
-O sea: el retailOS se fabrica **exactamente el `USEC_TIMER` de Rockbox**
-(`clocking-s5l8702.c:401`) y lo lee con una función de una instrucción. Ese
-contador corre bien. La hipótesis del temporizador queda **descartada con medida
-directa sobre el contador que el huésped consulta de verdad**, no por parecido.
+That is: the retailOS builds itself **exactly Rockbox's `USEC_TIMER`**
+(`clocking-s5l8702.c:401`) and reads it with a one-instruction function. That
+counter runs correctly. The timer hypothesis is **ruled out by direct measurement
+on the counter the guest actually reads**, not by resemblance.
 
-### 19.2 Fallo real 1: un `ack` reiniciaba la cuenta, y costaba el 14 % del reloj
+### 19.2 Real bug 1: an `ack` reset the count, and it cost 14 % of the clock
 
-En los temporizadores de 16 bits los bits de estado viven **en `CON`**, así que
-acusar recibo obliga a escribir `CON` —`TBCON = TBCON`, que es literalmente lo
-que hace `INT_TIMERB` de Rockbox (`kernel-s5l8702.c:31`)—. Y en el modelo
-**toda** escritura de `CON` llamaba a `chan_reload()`, que termina en
-`ptimer_set_limit(..., reload = 1)`: **la cuenta volvía arriba**. En la máquina
-de verdad sólo `TB_CLR` de `CMD` inicializa el contador.
+In the 16-bit timers the status bits live **in `CON`**, so
+acknowledging forces a write to `CON` —`TBCON = TBCON`, which is literally what
+Rockbox's `INT_TIMERB` does (`kernel-s5l8702.c:31`)—. And in the model
+**every** write to `CON` called `chan_reload()`, which ends in
+`ptimer_set_limit(..., reload = 1)`: **the count went back to the top**. On the real
+machine only `TB_CLR` in `CMD` initializes the counter.
 
-Consecuencia: cada periodo salía **una latencia de interrupción más largo**.
+Consequence: every period came out **one interrupt latency longer**.
 
 ```
 ack TBCON=TBCON: TBCNT 3289 -> 139   COUNTER WAS RESET
@@ -2154,191 +2159,190 @@ timer B interrupts in 2000042 us: 1713   expect 2000
 timer F interrupts in 2000040 us: 1997   expect 2000 (ack via TSTAT, CON untouched)
 ```
 
-La tercera línea es **el experimento de control**, y es lo que convierte esto en
-una prueba en vez de una sospecha: el temporizador F tiene el mismo periodo, el
-mismo VIC y el mismo manejador, y se diferencia **sólo** en que su estado vive
-en `TSTAT` y su `ack` no toca `CON`. F mantuvo la hora; B no.
+The third line is **the control experiment**, and it is what turns this into
+a proof instead of a suspicion: timer F has the same period, the
+same VIC and the same handler, and differs **only** in that its status lives
+in `TSTAT` and its `ack` does not touch `CON`. F kept time; B did not.
 
-**ARREGLADO** en `ipod_classic_timer.c`: el caso `CON` sólo recarga si los bits
-de **configuración** —fuente de reloj, modo, habilitación de interrupciones—
-cambian de verdad. Una escritura que sólo limpia estado deja la cuenta en paz.
+**FIXED** in `ipod_classic_timer.c`: the `CON` case only reloads if the
+**configuration** bits —clock source, mode, interrupt enables—
+actually change. A write that only clears status leaves the count alone.
 
 ```
 ack TBCON=TBCON: TBCNT 3364 -> 3513   kept counting
 timer B interrupts in 2000047 us: 1999   expect 2000
 ```
 
-**Sin regresión, y con la razón de por qué:** el retailOS **no usa** los
-temporizadores de 16 bits —sus únicos usos del bloque son el temporizador E de
-arriba y una lectura suelta de `+0x08` dentro de una función que suma bytes—,
-así que este arreglo le es inerte, y `navtest.sh` da después las mismas cifras
-al píxel que antes (§19.5). Quien lo cobra es Rockbox y cualquier prueba
-desnuda.
+**No regression, and with the reason why:** the retailOS **does not use**
+the 16-bit timers —its only uses of the block are timer E
+above and a stray read of `+0x08` inside a function that sums bytes—,
+so this fix is inert for it, and `navtest.sh` afterwards gives the same figures
+to the pixel as before (§19.5). The beneficiaries are Rockbox and any bare-metal
+test.
 
-### 19.3 Fallo real 2: `TICNTH`/`TICNTL` no están decodificados
+### 19.3 Real bug 2: `TICNTH`/`TICNTL` are not decoded
 
-`s5l87xx.h:782` pone un contador libre de 64 bits en `TIMER_BASE+0x80/0x84`, y
-`s5l87xx.h:793` lo llama `FIVE_USEC_TIMER`. `decode_offset()` cubre A..D en
-`0x00..0x7f` y E..H desde `0xa0`: **`0x80` y `0x84` caen en el hueco**, así que
-se registran como «bad offset» y **leen cero para siempre**.
+`s5l87xx.h:782` places a 64-bit free-running counter at `TIMER_BASE+0x80/0x84`, and
+`s5l87xx.h:793` calls it `FIVE_USEC_TIMER`. `decode_offset()` covers A..D at
+`0x00..0x7f` and E..H from `0xa0`: **`0x80` and `0x84` fall in the gap**, so
+they are logged as "bad offset" and **read zero forever**.
 
 ```
 TICNTH/L 0x00000000/0x00000000 -> 0x00000000/0x00000000  FROZEN
 ```
 
-Esto sí es, literalmente, la avería que la orden de trabajo describía —un
-contador de tiempo que no corre— pero **no le pasa al retailOS**: no hay ni un
-literal `0x3c700080` ni `0x3c700084` en los 9,9 MB de la imagen. Le pasaría a un
-huésped que girase sobre `FIVE_USEC_TIMER`, que se quedaría colgado para
-siempre.
+This really is, literally, the fault the work order described —a
+time counter that does not run— but **it does not affect the retailOS**: there is not a single
+`0x3c700080` or `0x3c700084` literal in the 9.9 MB of the image. It would affect a
+guest that spun on `FIVE_USEC_TIMER`, which would hang
+forever.
 
-**NO ARREGLADO, a propósito.** Añadir el registro es fácil; saber qué vale al
-reiniciar, si se puede parar y a qué frecuencia va exactamente no lo dice
-ninguna fuente que tengamos, y **un contador inventado que corre al ritmo
-equivocado es peor que uno que no está**, porque el segundo se nota y el primero
-no.
+**NOT FIXED, on purpose.** Adding the register is easy; knowing its value at
+reset, whether it can be stopped and at exactly what frequency it runs is not stated by
+any source we have, and **an invented counter that runs at the
+wrong rate is worse than one that is absent**, because the latter is noticeable and the former
+is not.
 
-### 19.4 Fallo real 3: escribir `DATA0` o `PRE` también reinicia la cuenta
+### 19.4 Real bug 3: writing `DATA0` or `PRE` also resets the count
 
-Mismo origen que el §19.2 y misma discrepancia con la máquina real:
+Same origin as §19.2 and same discrepancy with the real machine:
 
 ```
 rewrite TBDATA0: TBCNT 3872 -> 403   COUNTER WAS RESET
 rewrite TBPRE:   TBCNT 5411 -> 119   COUNTER WAS RESET
 ```
 
-**NO ARREGLADO**, y la razón está anotada en `chan_reload()`: ni Rockbox ni el
-retailOS escriben `DATA0` o `PRE` con el temporizador en marcha —los escriben
-parados, justo antes de `CMD_CLR`—, así que no hay nada medible que ganar, y
-diferir el límite rompería el caso contrario (un controlador que ponga `DATA0` y
-luego `EN` sin `CLR` y necesite el límite nuevo ya vivo).
+**NOT FIXED**, and the reason is noted in `chan_reload()`: neither Rockbox nor the
+retailOS writes `DATA0` or `PRE` with the timer running —they write them
+stopped, right before `CMD_CLR`—, so there is nothing measurable to gain, and
+deferring the limit would break the opposite case (a driver that sets `DATA0` and
+then `EN` without `CLR` and needs the new limit already live).
 
-### 19.5 Cuatro carreras de `navtest.sh`, y lo que dicen de verdad
+### 19.5 Four `navtest.sh` runs, and what they really say
 
-Dos antes del arreglo del temporizador y dos después. **Las cifras no se mueven
-al píxel**, que es lo que se esperaba del §19.2.
+Two before the timer fix and two after. **The figures do not move by
+a pixel**, which is what was expected from §19.2.
 
-| carrera | temporizador | veredicto |
+| run | timer | verdict |
 |---|---|---|
-| 1 | antes | **pierde SELECT en `09-into-music`** (875 px). Todo lo demás pasa |
-| 2 | antes | **pasa entera.** `10-menu-back` a **898 px** de `08-menu-wheel-back` |
-| 3 | después | **pasa entera.** `10-menu-back` a **0 px** de `08-menu-wheel-back` |
-| 4 | después | **pierde SELECT en `05-select`** (0 px), y con eso arrastra toda la segunda mitad |
+| 1 | before | **loses SELECT at `09-into-music`** (875 px). Everything else passes |
+| 2 | before | **passes entirely.** `10-menu-back` at **898 px** from `08-menu-wheel-back` |
+| 3 | after | **passes entirely.** `10-menu-back` at **0 px** from `08-menu-wheel-back` |
+| 4 | after | **loses SELECT at `05-select`** (0 px), and with that drags down the whole second half |
 
-Las cifras de la carrera 3, que es la buena y la de después: giros **8 000 /
-8 000 / 8 000** px sobre suelo **0 px**, `05-select` **19 340** px, `07` y `08`
-**lista 7 952 + panel 7 176** px, `09-into-music` **6 963** px, `10-menu-back`
-**6 963** px y **0 px de diferencia** con `08-menu-wheel-back`, `11-menu-at-top`
-**0 px** en la lista.
+The figures of run 3, which is the good one and the post-fix one: turns **8 000 /
+8 000 / 8 000** px over a floor of **0 px**, `05-select` **19 340** px, `07` and `08`
+**list 7 952 + panel 7 176** px, `09-into-music` **6 963** px, `10-menu-back`
+**6 963** px and **0 px difference** from `08-menu-wheel-back`, `11-menu-at-top`
+**0 px** in the list.
 
-**Mirado en PNG, no sólo contado**, que es la otra mitad de la medida:
+**Looked at as PNG, not just counted**, which is the other half of the measurement:
 
-- `08-menu-wheel-back`: el menú principal, barra «iPod», **ミュージック**
-  resaltado con su flecha, y el panel con la nota musical.
-- `09-into-music`: la pantalla de **Música** —barra ミュージック, **Cover Flow**
-  resaltado, y debajo プレイリスト, アーティスト, アルバム, コンピレーション,
-  曲, ジャンル, 作曲者, オーディオブック—. SELECT entró de verdad.
-- `10-menu-back`: **otra vez el menú principal**, barra «iPod», ミュージック
-  resaltado. Lo único que lo separa de `08` es la etiqueta que se desplaza sola
-  en el panel. **MENU vuelve, y vuelve a la pantalla de la que se salió.**
+- `08-menu-wheel-back`: the main menu, "iPod" bar, **ミュージック**
+  highlighted with its arrow, and the panel with the musical note.
+- `09-into-music`: the **Music** screen —ミュージック bar, **Cover Flow**
+  highlighted, and below it プレイリスト, アーティスト, アルバム, コンピレーション,
+  曲, ジャンル, 作曲者, オーディオブック—. SELECT really went in.
+- `10-menu-back`: **the main menu again**, "iPod" bar, ミュージック
+  highlighted. The only thing separating it from `08` is the label that scrolls by itself
+  in the panel. **MENU goes back, and goes back to the screen it left.**
 
-Y **`stderr` de esa carrera son dos líneas**: la carga de la imagen y el primer
-`SOURCE ADDRESS`. Ni una excepción, ni un reinicio por software. *Volver y morir
-no es volver*, y aquí no murió.
+And **that run's `stderr` is two lines**: the image load and the first
+`SOURCE ADDRESS`. Not one exception, not one software reset. *Going back and dying
+is not going back*, and here it did not die.
 
-Otras regresiones:
+Other regressions:
 
-| Prueba | Resultado |
+| Test | Result |
 |---|---|
-| `tools/ipod_video/navtest.sh` (el 5G) | **76 548 px** en los siete y **12 312 / 12 114 / 31 629**. Los dos primeros clavados a los del §17.8; el tercero dentro del «~31 600» que esa pantalla mueve por su reloj. **Sin regresión** |
-| `timer_audit.bin` y `timer_irq.bin` | ambas pasan; las cifras están arriba |
+| `tools/ipod_video/navtest.sh` (the 5G) | **76 548 px** in all seven and **12 312 / 12 114 / 31 629**. The first two exactly match §17.8; the third within the "~31 600" that screen moves by its clock. **No regression** |
+| `timer_audit.bin` and `timer_irq.bin` | both pass; the figures are above |
 
-**La trampa del §18.9 volvió a cobrar, y con un nombre nuevo.** Dos carreras más
-salieron con las capturas en pantallas equivocadas y **3 y 1 reinicios por
-software**. No era el parche: era un proceso `ipod-classic-run` —una copia
-privada del binario, con otro nombre— al **93 % de un núcleo** durante veinte
-minutos. `pkill -9 -x qemu-system-arm` no lo ve, igual que no ve `qemu-evt`, y
-por el mismo motivo deliberado: que una sesión no mate a otra.
+**The §18.9 trap struck again, under a new name.** Two more runs
+came out with the captures on the wrong screens and **3 and 1 software
+resets**. It was not the patch: it was an `ipod-classic-run` process —a private
+copy of the binary, under another name— at **93 % of a core** for twenty
+minutes. `pkill -9 -x qemu-system-arm` does not see it, just as it does not see `qemu-evt`, and
+for the same deliberate reason: so that one session does not kill another.
 
-Lo que sí valió: **el aviso de reinicios que el §18 metió en `navtest.sh`
-funcionó las dos veces** y evitó que esas cifras se leyeran como una regresión
-del temporizador. Se le añade ahora el aviso que faltaba —**contar procesos tipo
-QEMU antes de arrancar y decirlo**—, porque el que había sólo se enteraba
-*después*, cuando la carrera ya se había gastado. No los mata: pueden ser el
-trabajo en curso de otra sesión.
+What did work: **the reset warning that §18 put into `navtest.sh`
+fired both times** and kept those figures from being read as a timer
+regression. The missing warning is now added —**count QEMU-like processes
+before starting and say so**—, because the existing one only found out
+*afterwards*, when the run had already been wasted. It does not kill them: they may be
+another session's work in progress.
 
-### 19.6 La pérdida de SELECT es más ancha de lo que decía el §18.8
+### 19.6 The SELECT loss is wider than §18.8 said
 
-El §18.8 y la cabecera de `navtest.sh` avisaban de que la carrera puede
-suspender **en `09-into-music`**. Medido aquí: **también se pierde el primer
-SELECT, el de la pantalla de idiomas** (carrera 4, `05-select` = 0 px, sin
-reinicio ni excepción en `stderr`). Y cuando se pierde ése, **arrastra toda la
-segunda mitad de la prueba**, porque las capturas siguientes caen en la pantalla
-de idiomas: `07`/`08` siguen dando ~8 000 px en la lista y **0 en el panel**, que
-es exactamente lo correcto para esa pantalla (§18.5) y parece un fallo del panel
-si no se mira dónde se está.
+§18.8 and the `navtest.sh` header warned that the run can
+fail **at `09-into-music`**. Measured here: **the first
+SELECT, the one on the language screen, is also lost** (run 4, `05-select` = 0 px, with no
+reset or exception in `stderr`). And when that one is lost, **it drags down the whole
+second half of the test**, because the following captures land on the language
+screen: `07`/`08` still give ~8 000 px in the list and **0 in the panel**, which
+is exactly right for that screen (§18.5) and looks like a panel bug
+if you do not check where you are.
 
-Recuento de esta auditoría, contando sólo pulsaciones con destino:
+Tally for this audit, counting only presses that have a target:
 
-| | aciertos |
+| | hits |
 |---|---|
-| SELECT (`05` y `09` juntos) | **5 de 7** |
-| MENU con sitio a donde volver (`10`) | **2 de 2** |
-| MENU en lo alto de la pila (`11`), donde lo correcto es no hacer nada | **4 de 4** |
+| SELECT (`05` and `09` together) | **5 of 7** |
+| MENU with somewhere to go back to (`10`) | **2 of 2** |
+| MENU at the top of the stack (`11`), where the correct thing is to do nothing | **4 of 4** |
 
-La conclusión del §18.8 se mantiene y se refuerza: **la repetición del estado de
-botones no arregló la pérdida, y la pérdida no distingue pantalla**. La cabecera
-de `navtest.sh` queda corregida para decir que puede suspender en `05-select`
-igual que en `09-into-music`.
+The §18.8 conclusion holds and is reinforced: **repeating the button
+state did not fix the loss, and the loss does not depend on the screen**. The `navtest.sh`
+header is corrected to say it can fail at `05-select`
+as well as at `09-into-music`.
 
-### 19.7 Lo que se confirma de la tanda del §18, comprobándolo aparte
+### 19.7 What is confirmed from the §18 batch, checking it separately
 
-- **La puerta de las capas es real y los bits son los que dice.** Desensamblado
-  otra vez desde cero, con la base de carga del §1 (`0x08000000 + (offset -
-  0xAE48)`; con la base ingenua `0x08000000` se cae en un *thunk* de C++ y
-  parece que la evidencia esté inventada): `0x081271c8` carga `0x38900000` del
-  pozo de literales de `0x081272ac`, lee `[r3, #8]`, salta por
-  `cmp r1, #5 / addls pc, pc, r1, lsl #2`, y las seis ramas hacen `bic`/`orrne`
-  con `0x40, 0x20, 0x10, 0x08, 0x04, 0x80` y guardan en `0x08127250`.
-  **VERIFICADO instrucción a instrucción.**
-- **El orden de escrituras también.** En una carrera propia: `+0x060 =
-  0x089d42d4` y después `+0x008: 0x41118101 -> 0x41118141` (bit 6); `+0x078 =
-  0x0be2326c` y después `-> 0x41118161` (bit 5). **VERIFICADO.**
-- **El descriptor de la capa 2 es el que se quedaba encima.** `+0x094 =
-  0x014000f0` (320×240), `+0x09c = 0` (en el origen), `+0x090 = 0x0bfb4ff8`,
-  escrito **una sola vez en toda la carrera** y nunca borrado. **VERIFICADO.**
-- **La regla vacía de MENU es de esa pantalla, y ahora por una razón mejor que
-  la etiqueta.** `uirules.py` avisa de que el nombre de la izquierda es «el más
-  cercano hacia atrás», y hace bien: bajo la misma etiqueta salen también
-  `button.menu.up1 -> HandleExit` (`0x0073e774`) y una regla de **cronómetro**
-  (`button.playpause.up1 -> Stopwatch_Screen_Running`), que no puede ser de una
-  pantalla de idiomas. Leyendo los bytes, los grupos son `u32 count;
-  RULE[count]`, y el `count = 3` que empieza en `0x0073e624` contiene **la regla
-  vacía de MENU, `controller.GotoScreen_Language1` y
-  `list.pid.229444595.chosen1`**: las tres de la pantalla de idiomas.
-  `HandleExit` cae en el grupo **siguiente**, de `count = 5`, que es el del
-  cronómetro. La conclusión del §18.4 se sostiene, pero **la prueba buena es la
-  pertenencia al grupo, no la etiqueta**.
-- Los recuentos de `uirules.py` salen: **1 380** reglas, **108**
-  `button.menu.up` de las que **46** no tienen ni manejador ni acciones, y
-  `list.pid.229444595` aparece **una sola vez** y sólo con `.chosen1`.
+- **The layer gate is real and the bits are what it says.** Disassembled
+  again from scratch, with the load base from §1 (`0x08000000 + (offset -
+  0xAE48)`; with the naive base `0x08000000` you land in a C++ *thunk* and
+  it looks as though the evidence were made up): `0x081271c8` loads `0x38900000` from the
+  literal pool at `0x081272ac`, reads `[r3, #8]`, branches via
+  `cmp r1, #5 / addls pc, pc, r1, lsl #2`, and the six branches do `bic`/`orrne`
+  with `0x40, 0x20, 0x10, 0x08, 0x04, 0x80` and store at `0x08127250`.
+  **VERIFIED instruction by instruction.**
+- **The write order too.** In a run of our own: `+0x060 =
+  0x089d42d4` and then `+0x008: 0x41118101 -> 0x41118141` (bit 6); `+0x078 =
+  0x0be2326c` and then `-> 0x41118161` (bit 5). **VERIFIED.**
+- **The layer 2 descriptor is the one that stayed on top.** `+0x094 =
+  0x014000f0` (320×240), `+0x09c = 0` (at the origin), `+0x090 = 0x0bfb4ff8`,
+  written **only once in the whole run** and never cleared. **VERIFIED.**
+- **The empty MENU rule belongs to that screen, and now for a better reason than
+  the label.** `uirules.py` warns that the name on the left is "the closest one
+  going backwards", and rightly so: under the same label there also appear
+  `button.menu.up1 -> HandleExit` (`0x0073e774`) and a **stopwatch** rule
+  (`button.playpause.up1 -> Stopwatch_Screen_Running`), which cannot belong to a
+  language screen. Reading the bytes, the groups are `u32 count;
+  RULE[count]`, and the `count = 3` that starts at `0x0073e624` contains **the empty
+  MENU rule, `controller.GotoScreen_Language1` and
+  `list.pid.229444595.chosen1`**: all three from the language screen.
+  `HandleExit` falls into the **next** group, with `count = 5`, which is the
+  stopwatch one. The §18.4 conclusion holds, but **the good proof is
+  group membership, not the label**.
+- The `uirules.py` counts check out: **1 380** rules, **108**
+  `button.menu.up` of which **46** have neither handler nor actions, and
+  `list.pid.229444595` appears **only once** and only with `.chosen1`.
 
-### 19.8 Una corrección menor de anotación
+### 19.8 A minor annotation correction
 
-`S5L8702_WHEEL_BTN_REPEAT_MS` se presentaba apoyado en «el aparato de verdad
-transmite», cuando dos constantes más arriba en el mismo fichero dicen que **el
-ritmo de la rueda real es INDETERMINADO**. Lo comprobable es sólo que el estado
-de los cinco botones viaja en cada palabra de estado
-(`button-clickwheel.c:273`); que la rueda siga informando **después** de soltar
-no lo dice ninguna fuente. Los 400 ms quedan marcados como **elección de
-modelo**, como sus vecinos.
+`S5L8702_WHEEL_BTN_REPEAT_MS` was presented as backed by "the real device
+transmits", when two constants further up in the same file say that **the
+real wheel's rate is UNDETERMINED**. The only checkable fact is that the state
+of the five buttons travels in every status word
+(`button-clickwheel.c:273`); that the wheel keeps reporting **after** release
+is not stated by any source. The 400 ms are marked as a **model choice**, like its neighbors.
 
-### 19.9 Lo que sigue abierto
+### 19.9 What remains open
 
-- **La pérdida de SELECT**, §19.6. Sigue sin causa, y el experimento del
-  interruptor de bloqueo del PMU del §18.8 **sigue sin hacerse**.
+- **The SELECT loss**, §19.6. Still without a cause, and the PMU
+  hold-switch experiment from §18.8 **still has not been done**.
 - **`TICNTH`/`TICNTL`**, §19.3.
-- **La recarga en `DATA0`/`PRE`**, §19.4.
-- **Los modos de `CON[MODE]` distintos de 0**, que se registran como no
-  modelados y se tratan como intervalo.
-- Todo lo del §18.11, que sigue igual.
+- **The reload on `DATA0`/`PRE`**, §19.4.
+- **`CON[MODE]` modes other than 0**, which are logged as not
+  modeled and treated as interval.
+- Everything in §18.11, which remains the same.

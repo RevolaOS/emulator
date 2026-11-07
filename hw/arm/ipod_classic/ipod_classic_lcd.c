@@ -282,8 +282,8 @@ static bool lcd_frame_irq_on(void)
         const char *e = getenv("LCD_FRAME_IRQ");
         on = (e && *e && *e != '0') ? 1 : 0;
         if (on) {
-            fprintf(stderr, "LCD_FRAME_IRQ: el motor de fotograma avisa al "
-                    "terminar\n");
+            fprintf(stderr, "LCD_FRAME_IRQ: the frame engine signals when it "
+                    "finishes\n");
         }
     }
     return on == 1;
@@ -329,7 +329,7 @@ static void panel_frame_go(IPodClassicLCDState *s, uint32_t value)
      * Instrumentation only, and gated on LCDTRACE on purpose: stderr is the
      * channel the guest firmware itself talks on (it prints
      * "CPU_exception_handler" there through semihosting), and lesson 1 of
-     * wiki/09-historia-5g.md is to keep that channel readable.
+     * wiki/09-history-5g.md is to keep that channel readable.
      */
     if (lcd_trace_on()) {
         fprintf(stderr, "LCDTRACE  frame engine started (+0x70 = 0x%x), "

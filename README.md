@@ -110,7 +110,7 @@ That paragraph describes firmware 1.1.2 with the flags in
 models the audio engine as a per-frame decoder instead; see
 [Firmware 2.0.5 and RepriseOS](#firmware-205-and-repriseos).
 
-Full write-up: [`wiki/20-classic6g-reproductor.md`](wiki/20-classic6g-reproductor.md)
+Full write-up: [`wiki/20-classic6g-player.md`](wiki/20-classic6g-player.md)
 (how it was fixed) and [`wiki/19-classic6g-dsp-hle.md`](wiki/19-classic6g-dsp-hle.md)
 (the investigation, including the ~16 hypotheses that had to be retracted).
 
@@ -209,7 +209,7 @@ cd build && ./qemu-system-arm -M iPod-Classic \
 ### Running the music player
 
 The player needs several environment flags, each documented in
-[`wiki/20-classic6g-reproductor.md`](wiki/20-classic6g-reproductor.md). They are behind
+[`wiki/20-classic6g-player.md`](wiki/20-classic6g-player.md). They are behind
 flags because each has measured trade-offs and none is settled enough to impose:
 
 ```sh
@@ -363,7 +363,7 @@ changes, which is the `entry` property.
 ./build/qemu-system-arm -M "iPod-Video,entry=0x735a00" ...
 ```
 
-See [`wiki/09-historia-5g.md`](wiki/09-historia-5g.md) for the full invocation.
+See [`wiki/09-history-5g.md`](wiki/09-history-5g.md) for the full invocation.
 
 ---
 
@@ -413,7 +413,7 @@ device. See `wiki/10` §4 — and §5, on how to avoid bricking one.
 ## Dumping from a physical iPod Video 5G
 
 Requires a 5G with Rockbox installed: dual boot is what puts both firmwares in one
-image. Full chain in [`wiki/09-historia-5g.md`](wiki/09-historia-5g.md); the short
+image. Full chain in [`wiki/09-history-5g.md`](wiki/09-history-5g.md); the short
 version is `tools/ipod_video/dump-firmware.ps1` (Windows, admin) followed by
 `fwtool.py` and `tools/ipod_video/mkdisk.sh`.
 
@@ -465,7 +465,7 @@ see also [Limits on 2.0.5](#limits-on-205))
 
 - **Several constants are our choices or inferences**, not confirmed data. They are
   marked `ASSUMED` / `INFERRED` / `UNDETERMINED` in the code and collected in
-  [`wiki/09`](wiki/09-historia-5g.md) and [`wiki/12`](wiki/12-historia-6g.md).
+  [`wiki/09`](wiki/09-history-5g.md) and [`wiki/12`](wiki/12-history-6g.md).
 - `tools/ipod_video/navtest.sh` and `appletest.sh` **are not assertions, they are
   evidence generators**: they close the QEMU invocation with `|| true` and check
   nothing. **You have to look at the numbers.** `tools/ipod_classic/navtest.sh` *does*
@@ -478,13 +478,13 @@ see also [Limits on 2.0.5](#limits-on-205))
 | Document | Contents |
 |---|---|
 | [`wiki/README.md`](wiki/README.md) | Index of everything |
-| [`wiki/15-muros-classic6g.md`](wiki/15-muros-classic6g.md) | **Every wall on the Classic 6G and how each one fell** |
-| [`wiki/20-classic6g-reproductor.md`](wiki/20-classic6g-reproductor.md) | **How the music player was fixed** |
+| [`wiki/15-classic6g-walls.md`](wiki/15-classic6g-walls.md) | **Every wall on the Classic 6G and how each one fell** |
+| [`wiki/20-classic6g-player.md`](wiki/20-classic6g-player.md) | **How the music player was fixed** |
 | [`wiki/19-classic6g-dsp-hle.md`](wiki/19-classic6g-dsp-hle.md) | The audio investigation in full, retractions included |
-| [`wiki/12-historia-6g.md`](wiki/12-historia-6g.md) | **How everything on the Classic 6G was worked out**: each obstacle, its symptom and its cause, the catalogue of withdrawn hypotheses, and the chapter on **the three times a dismissal was the right lead** |
+| [`wiki/12-history-6g.md`](wiki/12-history-6g.md) | **How everything on the Classic 6G was worked out**: each obstacle, its symptom and its cause, the catalogue of withdrawn hypotheses, and the chapter on **the three times a dismissal was the right lead** |
 | [`wiki/10-classic6g-emcore.md`](wiki/10-classic6g-emcore.md) | **The real device over USB** and decrypting the `osos` with the SoC's own GID key |
 | [`wiki/11-classic6g-retailos.md`](wiki/11-classic6g-retailos.md) | The retailOS running, section by section, and how to reproduce every measurement |
-| [`wiki/09-historia-5g.md`](wiki/09-historia-5g.md) | The same for the iPod Video 5G |
+| [`wiki/09-history-5g.md`](wiki/09-history-5g.md) | The same for the iPod Video 5G |
 | [`wiki/05-build-notes.md`](wiki/05-build-notes.md) | Build, run, test, and how to find out where the firmware stopped |
 
 The wiki is in Spanish.

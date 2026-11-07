@@ -27,9 +27,9 @@ osos="$root/assets/images-5g/osos_full.bin"
 disk="$root/assets/ipod-video-disk.img"
 out=${1:-$root/assets/apple}
 
-[ -x "$qemu" ] || { echo "no encuentro $qemu; compila primero" >&2; exit 1; }
-[ -f "$osos" ] || { echo "no encuentro $osos" >&2; exit 1; }
-[ -f "$disk" ] || { echo "no encuentro $disk" >&2; exit 1; }
+[ -x "$qemu" ] || { echo "cannot find $qemu; build it first" >&2; exit 1; }
+[ -f "$osos" ] || { echo "cannot find $osos" >&2; exit 1; }
+[ -f "$disk" ] || { echo "cannot find $disk" >&2; exit 1; }
 
 mkdir -p "$out"
 rm -f "$out"/*.ppm "$out"/*.png
@@ -96,16 +96,16 @@ for path in sorted(glob.glob(os.path.join(out, "*.ppm"))):
 
     name = os.path.basename(path)
     lit = sum(1 for i in range(0, len(data), 3) if data[i:i + 3] != b"\x00\x00\x00")
-    line = "%-22s %6d/%d px encendidos (%5.2f%%)" % (
+    line = "%-22s %6d/%d px lit (%5.2f%%)" % (
         name, lit, w * h, 100.0 * lit / (w * h))
     if prev is not None and not name.startswith("nav-0"):
         diff = sum(1 for i in range(0, len(data), 3)
                    if data[i:i + 3] != prev[i:i + 3])
-        line += "   %6d px distintos del anterior" % diff
+        line += "   %6d px differ from the previous" % diff
     print(line)
     prev = data
 EOF
 
 rm -f "$out"/*.ppm
 echo
-echo "PNGs en $out"
+echo "PNGs in $out"

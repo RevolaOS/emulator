@@ -26,7 +26,7 @@
  *    model that leaves sub+0x14 at zero does not hang -- it makes the firmware
  *    believe every channel failed to power up. We make sub+0x14 read 7 once its
  *    sub+0x10 has been commanded, i.e. the channel reached its target state.
- *    VERIFIED offsets/flow; the 4/16/7 meanings are INFERIDO (strong).
+ *    VERIFIED offsets/flow; the 4/16/7 meanings are INFERRED (strong).
  *
  *  - Clock-ready: after the channel and codec config, the bring-up spins on
  *    +0xa98 bit2 with NO timeout (0x08081af8 `tst r0,#4; beq`), and the
@@ -34,12 +34,12 @@
  *    silicon the bit rises when the gated audio clock locks. We raise it once the
  *    firmware has begun powering the engine (its first channel command, the codec
  *    enable at +0x824, the +0x400 start, or the +0xc48 commit). VERIFIED that
- *    bit2 is the awaited bit and that it is un-timed; "clock locked" is INFERIDO.
+ *    bit2 is the awaited bit and that it is un-timed; "clock locked" is INFERRED.
  *
  *  - Run: the start/resume path writes 1 to +0x400 (0x080ae97c), which itself
  *    re-reads +0x400 expecting exactly 1, and then 0x08017378 polls +0x400 (&3)
  *    until 1 with NO timeout. A plain write latch answers both: write 1, read 1.
- *    VERIFIED both accessors; "run bit" is INFERIDO (strong).
+ *    VERIFIED both accessors; "run bit" is INFERRED (strong).
  *
  * Everything else in the low page is a latch (writes stored, reads return the
  * stored word, zero at reset) -- the config strobes at +0x8xx/+0x9xx, +0xa8c,
@@ -59,7 +59,7 @@
 #include "qemu/module.h"
 #include "migration/vmstate.h"
 #include "hw/core/cpu.h"
-#include "exec/cpu-common.h"   /* cpu_physical_memory_write: el estado en IRAM1 */
+#include "exec/cpu-common.h"   /* cpu_physical_memory_write: the state in IRAM1 */
 #include "hw/irq.h"
 #include "qemu/timer.h"
 #include "hw/arm/ipod_classic/ipod_classic_sm1.h"
@@ -335,8 +335,8 @@ static bool sm1_slots_on(void)
         const char *e = getenv("SM1_SLOTS");
         on = (e && *e && *e != '0') ? 1 : 0;
         if (on) {
-            fprintf(stderr, "SM1_SLOTS: publicando el estado del motor en IRAM1 "
-                    "(%d ranuras de %d marcos)\n",
+            fprintf(stderr, "SM1_SLOTS: publishing the engine state in IRAM1 "
+                    "(%d slots of %d frames)\n",
                     SM1_SLOT_COUNT, SM1_SLOT_FRAMES);
         }
     }
@@ -383,8 +383,8 @@ static bool sm1_decode_on(void)
         const char *e = getenv("SM1_DECODE");
         on = (e && *e && *e != '0') ? 1 : 0;
         if (on) {
-            fprintf(stderr, "SM1_DECODE: el motor entrega PCM en los buferes del "
-                    "codec (0x%08x / 0x%08x)\n",
+            fprintf(stderr, "SM1_DECODE: the engine delivers PCM into the codec "
+                    "buffers (0x%08x / 0x%08x)\n",
                     SM1_CODEC_BUF_A, SM1_CODEC_BUF_B);
         }
     }
@@ -432,8 +432,8 @@ static void sm1_fill_slot(unsigned i)
         if (!told) {
             told = true;
             ipod_classic_hle_audio_set_np_feed(true);
-            fprintf(stderr, "SM1_FEED_OFF: el atajo del anfitrion queda apagado; "
-                    "el audio solo puede salir por el camino del invitado\n");
+            fprintf(stderr, "SM1_FEED_OFF: the host shortcut is off; "
+                    "audio can only come out through the guest path\n");
         }
     }
 
@@ -1124,7 +1124,7 @@ static void ipod_classic_sm1_write(void *opaque, hwaddr offset,
      * signal behind +0xa98 bit2; deriving it from the guest's own first move
      * keeps the model coherent instead of hard-wiring the bit on. VERIFIED that
      * each of these writes is part of a bring-up; that they are what "powers"
-     * the clock is INFERIDO.
+     * the clock is INFERRED.
      */
     switch (offset) {
     case S5L8702_SM1_COMMIT:     /* +0xc48 config commit  */
