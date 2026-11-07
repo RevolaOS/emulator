@@ -77,9 +77,19 @@ MAX_BATTERY, DEFAULT_BATTERY = 1023, 844
 # firmware's kernel tick and microsecond counter, up to 64x faster.
 MAX_SPEED = 64
 
+# The payload's panic screen (payload/panic.c) uses only its background
+# (RGB565 0x1803) and white, with "OS PANIC" drawn in the PANIC_TITLE box
+# (x0, y0, x1, y1). It is sampled every PANIC_STEP px, PANIC_TOLERANCE per channel.
+PANIC_BACKGROUND, PANIC_WHITE = (24, 0, 24), (255, 255, 255)
+PANIC_TITLE, PANIC_STEP, PANIC_TOLERANCE = (12, 10, 108, 24), 8, 12
+
 
 class Failure(Exception):
     pass
+
+
+class Panic(Failure):
+    """The RepriseOS payload crashed and shows its OS PANIC screen."""
 
 
 def log(message):
@@ -436,6 +446,26 @@ def bands(rows, frame):
 def is_blank(frame):
     rgb = frame[2]
     return rgb.count(0) == len(rgb)
+
+
+def is_panic(frame):
+    width, height, rgb = frame
+
+    def colour(x, y):
+        i = (y * width + x) * 3
+        return rgb[i], rgb[i + 1], rgb[i + 2]
+
+    def near(pixel, target):
+        return all(abs(p - t) <= PANIC_TOLERANCE for p, t in zip(pixel, target))
+
+    for y in range(0, height, PANIC_STEP):
+        for x in range(0, width, PANIC_STEP):
+            pixel = colour(x, y)
+            if not (near(pixel, PANIC_BACKGROUND) or near(pixel, PANIC_WHITE)):
+                return False
+    x0, y0, x1, y1 = PANIC_TITLE
+    return any(near(colour(x, y), PANIC_WHITE)
+               for y in range(y0, min(y1, height)) for x in range(x0, min(x1, width)))
 
 
 def parse_region(text):
@@ -1069,15 +1099,45 @@ def asleep(regs):
     return regs.get('pc', 0) in STANDBY_WFI
 
 
+def text_lines(boxes, gap=5):
+    """Join OCR boxes whose tops are within `gap` px into lines, top to bottom."""
+    lines = []
+    for b in sorted(boxes, key=lambda b: (b['y'], b['x'])):
+        if lines and b['y'] - lines[-1][0]['y'] <= gap:
+            lines[-1].append(b)
+        else:
+            lines.append([b])
+    return [' '.join(b['text'] for b in sorted(line, key=lambda b: b['x'])) for line in lines]
+
+
+def check_panic(qmp, frame):
+    """Raise Panic, naming the crash from the panic screen's text, if `frame`
+    is the payload's OS PANIC screen."""
+    if not is_panic(frame):
+        return
+    shot = qmp.shot('panic')
+    from screen import ocr      # screen imports this module
+    try:
+        lines = text_lines(ocr(shot))
+    except Failure:
+        lines = []
+    # The large lines: "OS PANIC", the reason, then LR (software abort) or PC.
+    summary = ', '.join(lines[1:3])
+    raise Panic(f'the iPod crashed (OS PANIC{": " + summary if summary else ""}); {shot}')
+
+
 def settle_frame(qmp, before, limit, region=None, floor=0.0, mask=()):
     """Poll the running guest until the frame (or region, outside `mask`)
     differs from `before` and the next SETTLE_HOLDS polls match it, but no
-    sooner than `floor` and no later than `limit` seconds. Return the last digest."""
+    sooner than `floor` and no later than `limit` seconds. Return the last
+    digest. Raise Panic if the payload's panic screen appears."""
     started = time.monotonic()
     changed, holds = None, 0
     while True:
         time.sleep(POLL)
-        current = digest(qmp.frame(), region, mask)
+        frame = qmp.frame()
+        check_panic(qmp, frame)
+        current = digest(frame, region, mask)
         if current != before:
             holds = holds + 1 if current == changed else 0
             changed = current
@@ -1093,6 +1153,7 @@ def press(qmp, keys, pause=False, region=None, mask=()):
     unknown = [k for k in keys if k not in VALID_KEYS]
     if unknown:
         raise Failure(f'unknown keys {unknown}; use {sorted(VALID_KEYS)}')
+    check_panic(qmp, qmp.frame())
     qmp.cont()
     for key in keys:
         before = digest(qmp.frame(), region, mask)
@@ -1230,7 +1291,9 @@ def wait(name, until='stable', timeout=60.0, interval=2.0, region=None, pause=Fa
                 if until == 'asleep' and asleep(qmp.registers()):
                     break
                 time.sleep(interval)
-                current = digest(qmp.frame(), region)
+                frame = qmp.frame()
+                check_panic(qmp, frame)
+                current = digest(frame, region)
                 if until == 'change' and current != start:
                     break
                 if until == 'stable' and current == previous:

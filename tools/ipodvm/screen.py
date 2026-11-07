@@ -12,8 +12,8 @@ import json
 from pathlib import Path
 import subprocess
 
-from core import (QEMU_ROOT, QMP, Failure, asleep, digest, is_blank, log, press,
-                  press_verified, run_dir, settle_frame)
+from core import (QEMU_ROOT, QMP, Failure, asleep, check_panic, digest, is_blank,
+                  is_panic, log, press, press_verified, run_dir, settle_frame, text_lines)
 
 OCR_SOURCE = Path(__file__).resolve().parent / 'screentext.swift'
 OCR = QEMU_ROOT / 'build/ipodvm/screentext'
@@ -126,6 +126,9 @@ def analyse(frame, boxes):
     width, height, _ = frame
     if is_blank(frame):
         return {'state': 'blank', 'title': None, 'rows': [], 'selected': None, 'preview': []}
+    if is_panic(frame):
+        return {'state': 'panic', 'title': None, 'rows': [], 'selected': None,
+                'text': text_lines(boxes), 'preview': []}
     for box in boxes:
         box['cy'] = box['y'] + box['h'] / 2
     # Status icons (battery, charge bolt, play state) read as one or two stray
@@ -352,6 +355,7 @@ def goto(name, path, from_root=True):
     run = run_dir(name)
     steps = []
     with QMP(run) as qmp:
+        check_panic(qmp, qmp.frame())
         data = wake(qmp, read_with(qmp), steps)
         if from_root:
             data = to_root(qmp, data, steps)

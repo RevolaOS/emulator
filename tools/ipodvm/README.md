@@ -113,7 +113,8 @@ with `--title`. `--headless` runs without a window.
 `screen` returns the title, the visible rows (label, value such as `Off`,
 second-line detail such as `99 Songs`, submenu arrow), the selected row and
 the preview pane text. `state` is `list`, `other` (Now Playing, About, …),
-`charging` (the idle Charging screen; any key wakes it) or `blank`.
+`charging` (the idle Charging screen; any key wakes it), `blank` or `panic`
+(the RepriseOS payload's OS PANIC screen; `text` holds its lines).
 
 Text comes from macOS Vision. The selection bar is found from pixels rather
 than a fixed colour, so it does not depend on the theme, accent colour or dark
@@ -193,6 +194,12 @@ loads, Settings) needs `run N` or `wait`.
 In standby the firmware has gated its clocks and halted the CPU; the screen
 keeps its last frame and `screen` and `status` report `asleep`. Any key wakes
 it, and that key is also delivered to the user interface.
+
+When the RepriseOS payload crashes, it draws its OS PANIC screen and halts.
+Every poll checks for that screen (only the panic background colour and white,
+with white in the "OS PANIC" title box). `key`, `select`, `menu`, `wait` and
+`goto` then stop sending input and fail with the panic reason and LR or PC
+read from the screen, plus a screenshot.
 
 ## Debugging
 
