@@ -954,6 +954,12 @@ static void tb_phys_invalidate__locked(TranslationBlock *tb)
  */
 void tb_phys_invalidate(TranslationBlock *tb, tb_page_addr_t page_addr)
 {
+    /*
+     * The TB lives in the JIT buffer, which is write-protected for this
+     * thread while it executes guest code (MAP_JIT on macOS). The watchpoint
+     * path reaches here straight from a guest store.
+     */
+    qemu_thread_jit_write();
     if (page_addr == -1 && tb_page_addr0(tb) != -1) {
         tb_lock_pages(tb);
         do_tb_phys_invalidate(tb, true);
@@ -961,6 +967,7 @@ void tb_phys_invalidate(TranslationBlock *tb, tb_page_addr_t page_addr)
     } else {
         do_tb_phys_invalidate(tb, false);
     }
+    qemu_thread_jit_execute();
 }
 
 /*
