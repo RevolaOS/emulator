@@ -62,21 +62,23 @@
  *  +0x090  (V) SOURCE ADDRESS, slot 2   |  Which slot is used is chosen by the
  *  +0x0a8  (V) SOURCE ADDRESS, slot 3   |  caller, not by this block.
  *  +0x0c0  (V) SOURCE ADDRESS, slot 4  /
- *  +0x0d4  (M) (a | b << 8) from 0x0812793c. UNDETERMINED.
+ *  +0x0d4  (V,M) LAYER ORDER, (order | b << 8). The low byte selects one of
+ *          the six stacking orders of layers 0..2; see S5L8702_DISP_ORDER
+ *          below. Bits 15:8 are UNDETERMINED (2 on menus, 0 in a game).
  *  +0x0d8  (V,M) LAYER 0 config, +0x0dc LAYER 0 (second word)
  *  +0x0e0  (V,M) LAYER 1 config, +0x0e4 LAYER 1
  *  +0x0e8  (V,M) LAYER 2 config, +0x0ec LAYER 2
- *          The config word is built by 0x080b0140 as
- *          (fmt << 28) | (a << 16) | (b << 12) | c, and the second word is set
- *          by 0x080a9614 to a plain value. MEASURED on a diskless boot: the
- *          init path calls 0x080b0140(i, 0, 0, 1, 0) and 0x080a9614(i, 0) for
- *          i in 0..2, so all three configs are 0x00001000 and all three second
- *          words 0 -- which is what that trace shows, decode confirmed. A boot
- *          WITH a disk goes further and rewrites +0x0e0 and +0x0e8 as the user
- *          interface runs (MEASURED: 17 and 21 writes in 45 s, +0x0e8 ending on
- *          0x50004000); +0x0d8 is never written again. Nothing here gates the
- *          picture in this model -- see the note on the control register in
- *          ipod_classic_disp_compose().
+ *          2.0.5 writes three fields of the config word, each with a
+ *          read-modify-write through the table of the three addresses at
+ *          0x083f35e0:
+ *            bits 31:28 and 15:12  a mode pair from 0x081447a8, one of
+ *                       (1,0), (0,1), (5,4), (9,8), (11,10)
+ *            bits 7:0   a per-layer constant, stored at 0x08144470
+ *          The pairs read as (1 - w, w) blend weights, and the low byte as a
+ *          constant alpha. INFERRED from their shape; NOT MODELLED. MEASURED:
+ *          menus and Now Playing use 0x900080ff / 0x500040ff / 0x50004000 for
+ *          layers 0 / 1 / 2, and a running game 0x500040ff for layer 0 and
+ *          0x900080ff for layer 1.
  *  +0x0f0..+0x17c (V) nine 4-word entries, copied by 0x081276a0
  *  +0x180..+0x1c4 (V) nine 2-word entries, copied by 0x08127664
  *  +0x1ec..+0x1fc (V,M) five words copied straight out of a struct by
@@ -258,6 +260,25 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicDispState, IPOD_CLASSIC_DISP)
  */
 #define S5L8702_DISP_LAYER_EN_BIT(k) (1u << (6 - (k)))
 #define S5L8702_DISP_NLAYER_GATED 3
+
+/*
+ * THE LAYER ORDER, +0x0d4. The low byte picks how layers 0..2 stack.
+ *
+ * 0x0814482c stores (order | b << 8) here and keeps order at [obj + 0x1e7].
+ * Every per-layer setter (the constant at 0x08144448, the mode pair at
+ * 0x081447ec) then turns its logical layer i into a physical one as
+ * table[order * 3 + i], where table is the 18 bytes at 0x083f35ec: the six
+ * permutations of {0, 1, 2}, copied below. MEASURED: menus and Now Playing run
+ * with order 1, a game with order 4.
+ *
+ * Each row lists the physical layers from BACK to FRONT. The direction is
+ * fixed by order 1: Now Playing keeps the player interface in layer 0 with real
+ * alpha over opaque album art in layer 1, so layer 0 has to be in front, and
+ * row 1 ends in 0. In a game, order 4 brings layer 1 -- the game frame --
+ * over layer 0, which is then an opaque grey surface.
+ */
+#define S5L8702_DISP_ORDER       0x0d4
+#define S5L8702_DISP_NORDER      6
 
 struct IPodClassicDispState {
     SysBusDevice parent_obj;

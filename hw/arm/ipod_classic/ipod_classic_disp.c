@@ -112,6 +112,7 @@ static const char *disp_reg_name(hwaddr off)
     case 0x090:                   return "SRC_SLOT2";
     case 0x0a8:                   return "SRC_SLOT3";
     case 0x0c0:                   return "SRC_SLOT4";
+    case S5L8702_DISP_ORDER:      return "ORDER";
     case 0x0d8:                   return "LAYER0_CFG";
     case 0x0dc:                   return "LAYER0_W1";
     case 0x0e0:                   return "LAYER1_CFG";
@@ -373,56 +374,63 @@ static bool disp_draw_layer(IPodClassicDispState *s, int k, uint16_t *fb,
     return true;
 }
 
+/*
+ * The six stacking orders +0x0d4 selects, each listed BACK to FRONT. A copy of
+ * the firmware's own table at 0x083f35ec; see S5L8702_DISP_ORDER in the header
+ * for how it is used and why the rows read back to front.
+ */
+static const uint8_t disp_order[S5L8702_DISP_NORDER][S5L8702_DISP_NLAYER] = {
+    { 1, 2, 0 },
+    { 2, 1, 0 },    /* menus, Now Playing */
+    { 0, 2, 1 },
+    { 2, 0, 1 },
+    { 0, 1, 2 },    /* games */
+    { 1, 0, 2 },
+};
+
 bool ipod_classic_disp_compose(IPodClassicDispState *s, uint16_t *fb,
                                unsigned width, unsigned height)
 {
     bool drew = false;
 
     /*
-     * Slot order is Z order, lowest index at the back. INFERRED, but a
-     * measurement does back it, and an earlier version of this comment claimed
-     * the opposite ("no two layers have ever overlapped"), which is false:
-     * slots 0 and 1 overlap the whole time the language screen appears.
-     *
-     * MEASURED with DISPTRACE=1 over one boot with a disk. Slot 0 is 320x240 at
-     * (0,0) for the whole run. Slot 1 is a 16-bit surface whose right edge is
-     * pinned to the panel edge while its left edge slides right -- +0x084/+0x07c
-     * go (x=80, w=240), (82, 238), (95, 225), (122, 198), (168, 152), (232, 88),
-     * (310, 10), (400, -80), so x + w is 320 at every step until the surface
-     * goes negative and stops being drawn. That is a wipe, and a wipe only works
-     * if the sliding surface is IN FRONT: slot 1 holds the outgoing artwork (the
-     * bare gradient, no text -- dumped and looked at) and slot 0 the incoming
-     * one. With the Z order the other way round slot 0 would cover slot 1 from
-     * the first frame and there would be no transition at all.
-     *
      * A layer is drawn when it has a source address, a positive size AND its
      * enable bit set in CONTROL (+0x008): bit 6 for layer 0, bit 5 for layer 1,
-     * bit 4 for layer 2. An earlier version of this comment said "nothing else
-     * gates it" and named bits 16, 20 and 24 as the only candidates, dismissing
-     * them because they are set once during init and never touched again. That
-     * was right about 16/20/24 and wrong about the conclusion: the gate is
-     * bits 4..6, they move all the time, and ignoring them left every finished
-     * transition's surface on the panel for ever. See the header.
-     */
-    /*
-     * Z ORDER, and DISP_ALPHA=1 turns it over.
+     * bit 4 for layer 2. See the header.
      *
-     * The order below (slot 0 at the back) was inferred from the language
-     * screen's wipe, on the assumption that every layer is opaque. MEASURED,
-     * that assumption is false: the 32-bit layer carries a real alpha channel,
-     * and while Now Playing is on screen slot 0 holds the ENTIRE player UI --
-     * title bar, artist, album, "4 of 4", progress bar -- while slot 1 holds
-     * the album art, opaque and full-screen. Drawn back-to-front the art wipes
-     * the player out completely, which is exactly the blank right-hand side
-     * that made the screen look half-drawn.
+     * DISP_ALPHA=1 stacks layers 0..2 in the order +0x0d4 selects and blends the
+     * 32-bit layers source-over with their alpha channel. Both are needed for
+     * Now Playing (order 1): layer 0 holds the whole player interface -- title
+     * bar, artist, album, progress bar -- with real alpha, in front of the
+     * opaque album art in layer 1. The language screen's wipe also runs with
+     * order 1: the incoming pane in layer 0 is transparent where the outgoing
+     * one in layer 1 slides out underneath. A game selects order 4, which puts
+     * its frame in layer 1 in front of the opaque grey surface in layer 0.
+     * Layers 3 and 4 have never been programmed and stay at the back.
      *
-     * Front-to-back with source-over alpha explains BOTH: the player UI sits on
-     * top of the art, and the language wipe still works because the incoming
-     * pane is transparent where the outgoing one must show through.
+     * Without DISP_ALPHA every layer is opaque and slot order is Z order,
+     * lowest index at the back. Without alpha that is the only order in which
+     * the language wipe works -- slot 1's outgoing pane has to cover slot 0's
+     * incoming one -- but it hides the player interface behind the art.
      */
     if (disp_alpha_on()) {
-        for (int k = S5L8702_DISP_NSLOTS - 1; k >= 0; k--) {
+        unsigned order = s->reg[S5L8702_DISP_ORDER >> 2] & 0xff;
+
+        if (order >= S5L8702_DISP_NORDER) {
+            static bool warned;
+            if (!warned) {
+                warned = true;
+                qemu_log_mask(LOG_GUEST_ERROR, "s5l8702.disp: layer order %u "
+                              "is not one of the six the firmware uses; "
+                              "drawing order 1\n", order);
+            }
+            order = 1;
+        }
+        for (int k = S5L8702_DISP_NSLOTS - 1; k >= S5L8702_DISP_NLAYER; k--) {
             drew |= disp_draw_layer(s, k, fb, width, height);
+        }
+        for (int i = 0; i < S5L8702_DISP_NLAYER; i++) {
+            drew |= disp_draw_layer(s, disp_order[order][i], fb, width, height);
         }
         return drew;
     }

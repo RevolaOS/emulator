@@ -1042,6 +1042,7 @@ register. What matters here:
 |---|---|---|
 | `+0x008` | control register, six bitfields | six different functions read-modify-write it |
 | `+0x058 + k*0x18` | **the five layer descriptors**, k = 0..4 | `0x08126ffc..0x0812716c`, a five-way `switch` that writes the same six registers |
+| `+0x0d4` | **layer order**: the low byte picks one of the six stacking orders of layers 0..2 | 2.0.5: `0x0814482c` writes it; the per-layer setters map a logical layer through the permutation table at `0x083f35ec` (see the end of §18.11) |
 | `+0x0d8/+0xe0/+0xe8` | three layer configurations | `0x080b0140` builds them as `(fmt<<28)\|(a<<16)\|(b<<12)\|c` |
 | `+0x214` | `0x013f00ef` = 319 and 239, **the panel geometry** | literal at `0x08127468` |
 | `+0x3ac` | `(w<<20)\|(h<<8)\|…`, bit 0 = rotated | `0x080bcef8`, and `0x08127f54` calls it with `(64,64,0,0,0)` → `0x04004000`, which is exactly what the boot writes |
@@ -2077,13 +2078,18 @@ verdict is worthless. Repeat it.
 - **The low byte of `LAYERn_CFG`** (`+0x0d8`, `+0x0e0`, `+0x0e8`) is `0xff` in
   layers 0 and 1 and **`0x00`** in layer 2, across the 106 writes of one
   run. It looks like a **constant alpha**, and if it is, layer 2 is invisible
-  even while its enable bit is set. **It is not modeled**: the bit
+  even while its enable bit is set. 2.0.5 writes it at `0x08144470`, through
+  the layer-order mapping below. **It is not modeled**: the bit
   already explains the whole symptom, and this would only affect the frames **in the
   middle of a transition**. **INFERRED**, unresolved. If someday a
   transition looks covered for an instant, this is it.
 - **The 4-bit fields of `LAYERn_CFG` at `[31:28]` and `[15:12]`**, which
-  `0x081278fc` writes in pairs `(1,0)`, `(0,1)`, `(5,4)`, `(9,8)`, `(11,10)`:
-  they look like blend modes. **UNKNOWN**, and not needed.
+  `0x081278fc` (2.0.5: `0x081447a8..0x08144808`) writes in pairs `(1,0)`,
+  `(0,1)`, `(5,4)`, `(9,8)`, `(11,10)`. Each pair has the shape `(1 - w, w)`,
+  so they look like per-layer blend weights. **UNKNOWN**, and not modeled.
+  Menus and Now Playing use `0x900080ff` / `0x500040ff` / `0x50004000` for
+  layers 0 / 1 / 2; a running game uses `0x500040ff` for layer 0 and
+  `0x900080ff` for layer 1.
 - **Indices 3, 4 and 5 of the `CONTROL` writer** (bits `0x08`, `0x04`,
   `0x80`): only 5 is seen in use, twice in an entire run.
   **UNKNOWN**.
@@ -2092,6 +2098,28 @@ verdict is worthless. Repeat it.
   is `'1'` in all 1 380 rules of the image. What it is for is **UNKNOWN**.
 - **The intermittent "Low Battery" screen** at 46 s still has no
   explanation of its own; see the suspicion in §18.9.
+
+**`+0x0d4` is the layer order.** 2.0.5 stores `(order | b << 8)` there at
+`0x0814482c` and keeps `order` in the display object at `+0x1e7`. Every
+per-layer setter then maps logical layer `i` to physical layer
+`table[order * 3 + i]`, where `table` is the 18 bytes at `0x083f35ec`: the six
+permutations of `{0, 1, 2}`. Read back to front:
+
+| `order` | back → front | Measured on |
+|---|---|---|
+| 0 | 1, 2, 0 | |
+| 1 | 2, 1, 0 | menus, Now Playing |
+| 2 | 0, 2, 1 | |
+| 3 | 2, 0, 1 | |
+| 4 | 0, 1, 2 | a running game |
+| 5 | 1, 0, 2 | |
+
+Order 1 sets the direction. Now Playing keeps the player interface in layer
+0, with real alpha, over opaque album art in layer 1, so layer 0 must be in
+front. In a game, order 4 puts the game frame in layer 1 in front of layer 0,
+which is then an opaque `#353535` surface. With `DISP_ALPHA=1` the compositor
+stacks layers 0..2 in this order. `b` (bits 15:8) is `2` on menus and `0` in a
+game. **UNKNOWN**.
 
 ---
 
