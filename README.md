@@ -297,7 +297,7 @@ python3 tools/ipodvm/ipodvm.py launch --firmware <osos-cfw.bin> --disk <disk.img
 | SHA-1 | The block is a compression function with a readable and writable chaining state, as Apple's driver uses it, so the iTunesDB signature (`hash58`) is checked for real. `SHA1_ZERO=1` makes the state read as zero, which matches a database whose hash was blanked |
 | Codec volume | The CS42L55 headphone gain (−60 dB to +2 dB, mute) scales the `AUDIOLIVE` output. The factory default is −32 dB. `AUDIOGAIN=<dB>` adds make-up gain, capped at unity; `AUDIOGAIN=line` ignores the codec |
 | Audio engine (`SM1_SYNC=1`) | One completion per compressed frame the guest hands the engine, delivered once the guest has taken the previous slot, and the `+0xa48` window register reads 0. With `SM1_DECODE=1` each slot carries that frame's PCM, and the host DMA feed is off |
-| Host decode | The data-path shim finds the track by locating the bytes the guest hands the engine in the files on the disk, and decodes it with `ffmpeg`. MP3 and AAC (`.m4a`) are indexed frame by frame |
+| Host decode | The data-path shim finds the track by locating the bytes the guest hands the engine in the files on the disk, and decodes it with `ffmpeg`. MP3, and AAC, HE-AAC and ALAC in `.m4a` and `.m4b` files, are indexed frame by frame. Files may be fragmented |
 
 ### Playback configurations
 
@@ -340,8 +340,11 @@ DISK=assets/disk/music-2.0.5.img tools/ipod_classic/run7g.sh
 
 ### Limits on 2.0.5
 
-- **The decode is host-side.** The on-chip codec is not emulated. HE-AAC and ALAC
-  are not handled.
+- **The decode is host-side.** The on-chip codec is not emulated. WAV and AIFF
+  files are not handled.
+- **HE-AAC can drop out briefly.** Now and then the guest hands an HE-AAC frame to
+  the engine late, and the output has a gap of up to about 0.1 s: about one a minute
+  on a lightly loaded host, a few a minute on a busy one.
 - **The host decoder indexes the first 64 audio files on the disk.** A track outside
   them is not identified, and its audio is not decoded.
 - **A guest crash looks like a freeze.** RepriseOS's panic handler draws straight to

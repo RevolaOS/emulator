@@ -569,7 +569,7 @@ static void sm1_sync_submit(const uint8_t *head)
 /* Deliver one owed frame if the guest has taken the last. True if it did. */
 static bool sm1_sync_complete(void)
 {
-    uint8_t pcm[2048 * 4];              /* room for an SBR frame */
+    uint8_t pcm[4096 * 4];              /* room for a stereo ALAC frame */
     unsigned samples = sm1_sync_frames * sm1_sync_channels;
     uint16_t h;
 

@@ -23,7 +23,7 @@
  *
  * So this shim supplies what the deadlock withholds -- and ONLY that. It:
  *   1. parses the guest's OWN FAT32 partition and identifies the audio file
- *      (MP3/M4A) the guest is streaming, from the guest's OWN disk reads (the
+ *      (MP3, or AAC/ALAC in MP4) the guest is streaming, from the guest's OWN disk reads (the
  *      ATA DMA read that lands in a file's data), so we decode the SAME song the
  *      guest chose. The guest's play is non-deterministic (wiki/19 11.11 regime
  *      A/B); when it never streams the file for us to key on, a fallback decodes
@@ -118,10 +118,18 @@
 
 #define HLE_MAX_TRACKS         64
 
+/* One run of contiguous clusters of a file. */
 typedef struct {
-    uint64_t file_off;      /* byte offset of the file's data on the image    */
-    uint64_t size;          /* file size in bytes                             */
-    char     name[16];      /* 8.3 short name (diagnostic)                    */
+    uint64_t pos;           /* where the run starts in the file               */
+    uint64_t off;           /* where it starts on the image                   */
+    uint64_t len;           /* bytes                                          */
+} HLEExtent;
+
+typedef struct {
+    HLEExtent *ext;         /* the file's data, in file order                 */
+    unsigned   next;
+    uint64_t   size;        /* file size in bytes                             */
+    char       name[16];    /* 8.3 short name (diagnostic)                    */
 } HLETrack;
 
 typedef struct {
@@ -140,8 +148,10 @@ typedef struct {
     int         ntracks;
     bool        scan_done;          /* worker finished scanning                */
 
-    /* Per-track whole-file bytes read by the guest (for auto-identification). */
+    /* Per-track bytes of new file data read by the guest, and the furthest
+     * file position they reached (for auto-identification). */
     uint64_t    file_read[HLE_MAX_TRACKS];
+    uint64_t    file_seen[HLE_MAX_TRACKS];
 
     /* Chosen track and its decoded PCM (16-bit stereo interleaved 44100). */
     int         chosen;             /* -1 until identified                     */
@@ -231,24 +241,101 @@ static uint64_t hle_clus_off(HLEFat *fs, uint32_t c)
     return fs->data_start + (uint64_t)(c - 2) * fs->cbytes;
 }
 
-/* Is the file's cluster chain a single contiguous run? (Ours are.) */
-static bool hle_chain_contig(HLEFat *fs, uint32_t clus, uint32_t *nclus)
+/*
+ * The file's cluster chain as runs of contiguous clusters. A library copied
+ * onto a used volume is fragmented wherever the allocator filled old holes.
+ * Returns the number of clusters.
+ */
+static uint32_t hle_chain_extents(HLEFat *fs, uint32_t clus, HLETrack *t)
 {
     uint32_t c = clus, n = 0;
-    bool contig = true;
-    while (c >= 2 && c < 0x0FFFFFF8 && n < 4000000) {
-        uint32_t nc = hle_fat_next(fs, c);
-        n++;
-        if (nc >= 2 && nc < 0x0FFFFFF8 && nc != c + 1) {
-            contig = false;
+    uint64_t pos = 0;
+
+    t->ext = NULL;
+    t->next = 0;
+    while (c >= 2 && c < 0x0FFFFFF8 && n < 4000000 && pos < t->size) {
+        uint64_t len = MIN((uint64_t)fs->cbytes, t->size - pos);
+        HLEExtent *x = t->next ? &t->ext[t->next - 1] : NULL;
+
+        if (x && x->off + x->len == hle_clus_off(fs, c)) {
+            x->len += len;
+        } else {
+            t->ext = g_renew(HLEExtent, t->ext, t->next + 1);
+            t->ext[t->next++] = (HLEExtent){ pos, hle_clus_off(fs, c), len };
         }
-        if (nc == c) {
+        pos += len;
+        n++;
+        if (hle_fat_next(fs, c) == c) {
             break;
         }
-        c = nc;
+        c = hle_fat_next(fs, c);
     }
-    *nclus = n;
-    return contig;
+    if (pos < t->size) {
+        t->size = pos;          /* a chain shorter than the directory says */
+    }
+    return n;
+}
+
+/* Read [pos, pos + len) of track t from the image. */
+static bool hle_track_read(int fd, const HLETrack *t, uint8_t *buf,
+                           uint64_t len, uint64_t pos)
+{
+    if (pos + len > t->size) {
+        return false;
+    }
+    for (unsigned i = 0; i < t->next && len; i++) {
+        const HLEExtent *x = &t->ext[i];
+        uint64_t at, n;
+
+        if (pos >= x->pos + x->len) {
+            continue;
+        }
+        at = pos - x->pos;
+        n = MIN(len, x->len - at);
+        if (pread(fd, buf, n, x->off + at) != (ssize_t)n) {
+            return false;
+        }
+        buf += n;
+        pos += n;
+        len -= n;
+    }
+    return len == 0;
+}
+
+/* How many bytes of the image range [lo, hi) hold track t's data from file
+ * position `from` on; *end, if given, is the file position just past the
+ * last of them. */
+static uint64_t hle_track_overlap(const HLETrack *t, uint64_t lo, uint64_t hi,
+                                  uint64_t from, uint64_t *end)
+{
+    uint64_t ov = 0;
+
+    for (unsigned i = 0; i < t->next; i++) {
+        const HLEExtent *x = &t->ext[i];
+        uint64_t skip = from > x->pos ? MIN(from - x->pos, x->len) : 0;
+        uint64_t a = MAX(lo, x->off + skip), b = MIN(hi, x->off + x->len);
+
+        if (b > a) {
+            ov += b - a;
+            if (end) {
+                *end = MAX(*end, x->pos + (b - x->off));
+            }
+        }
+    }
+    return ov;
+}
+
+/* The file position of image offset `off` in track t, or -1. */
+static int64_t hle_track_pos(const HLETrack *t, uint64_t off)
+{
+    for (unsigned i = 0; i < t->next; i++) {
+        const HLEExtent *x = &t->ext[i];
+
+        if (off >= x->off && off < x->off + x->len) {
+            return (int64_t)(x->pos + (off - x->off));
+        }
+    }
+    return -1;
 }
 
 /* Read a whole directory (following its cluster chain) into a malloc'd buffer. */
@@ -273,9 +360,10 @@ static uint8_t *hle_read_dir(HLEFat *fs, uint32_t clus, size_t *out_len)
 
 static bool hle_is_audio_ext(const uint8_t *e83)
 {
-    /* 8.3 extension is bytes 8..10, space-padded uppercase. */
+    /* 8.3 extension is bytes 8..10, space-padded uppercase. M4B: audiobooks. */
     return (memcmp(e83 + 8, "MP3", 3) == 0) || (memcmp(e83 + 8, "M4A", 3) == 0) ||
-           (memcmp(e83 + 8, "AAC", 3) == 0) || (memcmp(e83 + 8, "M4P", 3) == 0);
+           (memcmp(e83 + 8, "M4B", 3) == 0) || (memcmp(e83 + 8, "AAC", 3) == 0) ||
+           (memcmp(e83 + 8, "M4P", 3) == 0);
 }
 
 static void hle_walk_dir(HLEFat *fs, uint32_t clus, int depth)
@@ -308,19 +396,22 @@ static void hle_walk_dir(HLEFat *fs, uint32_t clus, int depth)
                 hle_walk_dir(fs, fc, depth + 1);   /* subdirectory */
             }
         } else if (hle_is_audio_ext(e) && fc >= 2 && sz > 0) {
-            uint32_t nclus = 0;
-            bool contig = hle_chain_contig(fs, fc, &nclus);
             HLETrack *t = &hle.tracks[hle.ntracks];
-            t->file_off = hle_clus_off(fs, fc);
+            uint32_t nclus;
+
             t->size = sz;
+            nclus = hle_chain_extents(fs, fc, t);
+            if (!t->next) {
+                continue;
+            }
             memcpy(t->name, e, 11);
             t->name[11] = '\0';
             hle.ntracks++;
             if (hle.trace) {
-                fprintf(stderr, "HLE_AUDIO: file%d '%.11s' off=%llu size=%u "
-                        "clus=%u nclus=%u%s\n", hle.ntracks - 1, e,
-                        (unsigned long long)t->file_off, sz, fc, nclus,
-                        contig ? "" : " NON-CONTIGUOUS!");
+                fprintf(stderr, "HLE_AUDIO: file%d '%.11s' off=%llu size=%llu "
+                        "clus=%u nclus=%u extents=%u\n", hle.ntracks - 1, e,
+                        (unsigned long long)t->ext[0].off,
+                        (unsigned long long)t->size, fc, nclus, t->next);
             }
         }
     }
@@ -429,9 +520,9 @@ static void hle_scan_disk(void)
         hle.unique_song = true;
     } else if (hle.ntracks > 1) {
         uint8_t *a = g_malloc(65536), *b = g_malloc(65536);
-        hle.unique_song = (pread(fd, a, 65536, hle.tracks[0].file_off) == 65536);
+        hle.unique_song = hle_track_read(fd, &hle.tracks[0], a, 65536, 0);
         for (int k = 1; k < hle.ntracks && hle.unique_song; k++) {
-            if (pread(fd, b, 65536, hle.tracks[k].file_off) != 65536 ||
+            if (!hle_track_read(fd, &hle.tracks[k], b, 65536, 0) ||
                 memcmp(a, b, 65536) != 0) {
                 hle.unique_song = false;
             }
@@ -490,7 +581,7 @@ static uint8_t *hle_decode_track(int k, size_t *out_used)
     char tmp[] = "/tmp/hle_track_XXXXXX.m4a";
     char cmd[1200];
     int tfd, dfd;
-    uint64_t off, len;
+    uint64_t len;
     uint8_t *fbuf;
     FILE *pp;
     uint8_t *pcm = NULL;
@@ -501,10 +592,9 @@ static uint8_t *hle_decode_track(int k, size_t *out_used)
         return NULL;
     }
     t = &hle.tracks[k];
-    off = t->file_off;
     len = t->size;
 
-    /* Extract the whole audio file (contiguous on this image) to a temp. */
+    /* Extract the whole audio file, extent by extent, to a temp. */
     tfd = mkstemps(tmp, 4);
     if (tfd < 0) {
         fprintf(stderr, "HLE_AUDIO: mkstemps failed\n");
@@ -518,14 +608,11 @@ static uint8_t *hle_decode_track(int k, size_t *out_used)
     fbuf = g_malloc(1u << 20);
     for (uint64_t done = 0; done < len; ) {
         size_t want = MIN((uint64_t)(1u << 20), len - done);
-        ssize_t got = pread(dfd, fbuf, want, off + done);
-        if (got <= 0) {
+        if (!hle_track_read(dfd, t, fbuf, want, done) ||
+            write(tfd, fbuf, want) != (ssize_t)want) {
             break;
         }
-        if (write(tfd, fbuf, got) != got) {
-            break;
-        }
-        done += got;
+        done += want;
     }
     g_free(fbuf);
     close(dfd);
@@ -693,8 +780,8 @@ void ipod_classic_hle_audio_note_disk_read(uint64_t byte_off, uint32_t len)
     if (hle.trace_disk) {
         int in = -1;
         for (int k = 0; k < hle.ntracks; k++) {
-            if (byte_off + len > hle.tracks[k].file_off &&
-                byte_off < hle.tracks[k].file_off + hle.tracks[k].size) {
+            if (hle_track_overlap(&hle.tracks[k], byte_off, byte_off + len, 0,
+                                  NULL)) {
                 in = k;
                 break;
             }
@@ -703,7 +790,8 @@ void ipod_classic_hle_audio_note_disk_read(uint64_t byte_off, uint32_t len)
                 "file=%d (+%lld)\n",
                 qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL),
                 (unsigned long long)byte_off, len, in,
-                in >= 0 ? (long long)(byte_off - hle.tracks[in].file_off) : 0LL);
+                in >= 0 ? (long long)hle_track_pos(&hle.tracks[in], byte_off)
+                        : 0LL);
     }
     if (qatomic_read(&hle.pcm_ready) || hle.chosen >= 0 || hle.stream_seen) {
         return;
@@ -717,14 +805,22 @@ void ipod_classic_hle_audio_note_disk_read(uint64_t byte_off, uint32_t len)
      * before it, and keying on the start address played file0 instead.
      */
     int best = -1;
-    uint64_t best_ov = 0;
+    uint64_t best_ov = 0, best_end = 0;
     for (int k = 0; k < hle.ntracks; k++) {
-        HLETrack *t = &hle.tracks[k];
-        /* Past the head only: a scan re-reads the first clusters for ever. */
-        uint64_t lo = MAX(byte_off, t->file_off + HLE_DISK_PICK_SKIP);
-        uint64_t hi = MIN(byte_off + len, t->file_off + t->size);
-        if (hi > lo && hi - lo > best_ov) {
-            best_ov = hi - lo;
+        /*
+         * Past the head, and past what was already counted: a scan re-reads
+         * the same clusters for ever -- the first clusters of a file, and
+         * whatever pieces of a fragmented one sit among the directories --
+         * while a stream moves on through the file.
+         */
+        uint64_t end = 0;
+        uint64_t ov = hle_track_overlap(&hle.tracks[k], byte_off,
+                                        byte_off + len,
+                                        MAX(HLE_DISK_PICK_SKIP,
+                                            hle.file_seen[k]), &end);
+        if (ov > best_ov) {
+            best_ov = ov;
+            best_end = end;
             best = k;
         }
     }
@@ -732,6 +828,7 @@ void ipod_classic_hle_audio_note_disk_read(uint64_t byte_off, uint32_t len)
         HLETrack *t = &hle.tracks[k];
         {
             hle.file_read[k] += best_ov;
+            hle.file_seen[k] = best_end;
             if (hle.trace) {
                 fprintf(stderr, "HLE_AUDIO: read file%d '%s' off=%llu len=%u "
                         "(tot=%llu)\n", k, t->name, (unsigned long long)byte_off,
@@ -1089,9 +1186,11 @@ void ipod_classic_hle_audio_commit(uint32_t moved)
  */
 typedef struct {
     uint8_t  *data;         /* the file's bytes, read once */
-    uint32_t *frame_off;    /* where each MPEG audio frame starts */
+    uint32_t *frame_off;    /* where each audio frame starts */
     unsigned  nframes;
-    unsigned  spf;          /* samples per frame: 1152, or 576 for MPEG-2/2.5 */
+    unsigned  spf;          /* decoded samples per frame and channel: MPEG
+                             * 1152 or 576; MP4 from its sample table, e.g.
+                             * AAC-LC 1024, HE-AAC 2048, ALAC 4096 */
     unsigned  rate;
     unsigned  channels;
     bool      info_frame;   /* frame 0 is a Xing/Info header, not audio */
@@ -1126,12 +1225,15 @@ static unsigned hle_mp3_frame(const uint8_t *d, unsigned *spf, unsigned *rate,
 }
 
 /*
- * AAC in an MP4 container. The guest hands the engine raw AAC frames exactly as
- * it does MPEG ones (MEASURED on 2.0.5: 517 hand-overs for a 12 s clip, 43 a
- * second, at offsets 3416, 3837, 4154 ... -- the file's own sample table from
- * its second entry on), so the frame index here is that table: stsz gives each
- * frame's size, stco/co64 and stsc where the chunks are and how many frames
- * each holds. An AAC-LC frame is 1024 samples.
+ * AAC or ALAC in an MP4 container (.m4a, .m4b). The guest hands the engine raw
+ * frames exactly as it does MPEG ones (MEASURED on 2.0.5: 517 hand-overs for a
+ * 12 s AAC clip, 43 a second, at offsets 3416, 3837, 4154 ... -- the file's own
+ * sample table from its second entry on; 1292 for a 120 s ALAC file, its 1292
+ * samples), so the frame index here is that table: stsz gives each frame's
+ * size, stco/co64 and stsc where the chunks are and how many frames each
+ * holds. How much audio a frame decodes to is stts's sample duration in the
+ * media timescale (mdhd), scaled to the output rate: 1024 for AAC-LC, 2048
+ * for HE-AAC (SBR doubles the core's 1024), 4096 for ALAC's default frame.
  */
 static uint32_t hle_be32(const uint8_t *p)
 {
@@ -1171,22 +1273,24 @@ static bool hle_mp4_box(const uint8_t *d, size_t off, size_t end,
 static bool hle_mp4_index(HLEStream *st, size_t size)
 {
     const uint8_t *d = st->data;
-    size_t ms, me, ts, te, a, b, sa, sb;
+    size_t ms, me, ts, te, ma, mb, a, b, sa, sb;
 
     if (!hle_mp4_box(d, 0, size, "moov", &ms, &me)) {
         return false;
     }
-    /* Each track in turn, until one is AAC audio. */
+    /* Each track in turn, until one is AAC or ALAC audio. */
     for (size_t at = ms; hle_mp4_box(d, at, me, "trak", &ts, &te); at = te) {
-        size_t zs, ze, cs, ce, os, oe, ds, de;
-        uint32_t nsamp, fixed, nstsc, nchunk, s = 0;
+        size_t zs, ze, cs, ce, os, oe, ds, de, hs, he, xs, xe;
+        uint32_t nsamp, fixed, nstsc, nchunk, scale, delta, s = 0;
         bool co64 = false;
 
-        if (!hle_mp4_box(d, ts, te, "mdia", &a, &b) ||
-            !hle_mp4_box(d, a, b, "minf", &a, &b) ||
+        if (!hle_mp4_box(d, ts, te, "mdia", &ma, &mb) ||
+            !hle_mp4_box(d, ma, mb, "mdhd", &hs, &he) || he - hs < 24 ||
+            !hle_mp4_box(d, ma, mb, "minf", &a, &b) ||
             !hle_mp4_box(d, a, b, "stbl", &sa, &sb) ||
             !hle_mp4_box(d, sa, sb, "stsd", &ds, &de) || de - ds < 44 ||
-            memcmp(d + ds + 12, "mp4a", 4) ||
+            (memcmp(d + ds + 12, "mp4a", 4) && memcmp(d + ds + 12, "alac", 4)) ||
+            !hle_mp4_box(d, sa, sb, "stts", &xs, &xe) || xe - xs < 16 ||
             !hle_mp4_box(d, sa, sb, "stsz", &zs, &ze) || ze - zs < 12 ||
             !hle_mp4_box(d, sa, sb, "stsc", &cs, &ce) || ce - cs < 8) {
             continue;
@@ -1229,13 +1333,17 @@ static bool hle_mp4_index(HLEStream *st, size_t size)
             }
         }
         st->nframes = s;
-        st->spf = 1024;
         st->channels = d[ds + 32] << 8 | d[ds + 33];
         st->rate = hle_be32(d + ds + 40) >> 16;
         st->info_frame = false;
         if (st->channels < 1 || st->channels > 2) {
             st->channels = 2;
         }
+        /* The first stts run: every frame but the last lasts this long. */
+        scale = hle_be32(d + hs + (d[hs] == 1 ? 20 : 12));
+        delta = hle_be32(d + xs + 12);
+        st->spf = (scale && delta && hle_be32(d + xs + 4))
+                  ? (unsigned)((uint64_t)delta * st->rate / scale) : 1024;
         return s > 0;
     }
     return false;
@@ -1256,7 +1364,7 @@ static bool hle_stream_load(int k)
         return false;
     }
     st->data = g_malloc(t->size);
-    if (pread(fd, st->data, t->size, t->file_off) != (ssize_t)t->size) {
+    if (!hle_track_read(fd, t, st->data, t->size, 0)) {
         g_free(st->data);
         st->data = NULL;
         close(fd);
@@ -1458,13 +1566,29 @@ int ipod_classic_hle_audio_frame_pcm(const uint8_t *head, size_t len,
         memset(dst, 0, bytes);
         return (int)bytes;
     }
-    at = (size_t)frame * *samples * 2;
 
     qemu_mutex_lock(&hle.lock);
     if (k != hle.chosen || !qatomic_read(&hle.pcm_ready)) {
         qemu_mutex_unlock(&hle.lock);
         return 0;
     }
+    /*
+     * A decoder can make more audio per frame than the container declares:
+     * HE-AAC whose SBR is signalled only inside the stream is labelled with
+     * the core's rate and 1024-sample frames, and decodes to twice both. The
+     * decoded length settles it, in whole multiples (priming and a short last
+     * frame are a fraction of one).
+     */
+    {
+        unsigned per = hle.pcm_len / 2 / st->nframes;
+        unsigned mult = (per + *samples / 2) / *samples;
+
+        if (mult > 1 && (size_t)*samples * mult * 2 <= max) {
+            *samples *= mult;
+            bytes = (size_t)*samples * 2;
+        }
+    }
+    at = (size_t)frame * *samples * 2;
     if (at < hle.pcm_len) {
         n = MIN(bytes, hle.pcm_len - at);
         memcpy(dst, hle.pcm + at, n);
