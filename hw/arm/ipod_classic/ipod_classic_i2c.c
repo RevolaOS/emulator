@@ -61,7 +61,7 @@ static void i2c_trace_start(IPodClassicI2CState *s, bool recv, int nack)
     }
 }
 
-/* I2CTRACE=2 adds every data byte, and the STOPs. */
+/* I2CTRACE=2 adds every data byte, the STOPs and held write-backs. */
 static bool i2c_trace_bytes_on(void)
 {
     static int on = -1;
@@ -96,6 +96,7 @@ static void ipod_classic_i2c_go(IPodClassicI2CState *s)
     uint32_t mode = s->iicstat & S5L8702_IICSTAT_MODE_MASK;
 
     s->byte_done = false;
+    s->ds_fresh = false;
 
     switch (mode) {
     case S5L8702_IICSTAT_START_TX:
@@ -140,6 +141,7 @@ static uint64_t ipod_classic_i2c_read(void *opaque, hwaddr offset,
     case S5L8702_IICADD:
         return s->iicadd;
     case S5L8702_IICDS:
+        s->ds_fresh = true;
         return s->iicds;
     case S5L8702_IICUNK10:
         /*
@@ -225,7 +227,37 @@ static void ipod_classic_i2c_write(void *opaque, hwaddr offset,
     case S5L8702_IICCON:
         s->iiccon = value & ~S5L8702_IICCON_GO;
         if ((value & S5L8702_IICCON_GO) && s->byte_done) {
-            ipod_classic_i2c_go(s);
+            uint32_t mode = s->iicstat & S5L8702_IICSTAT_MODE_MASK;
+
+            /*
+             * A WRITE-BACK, NOT A NEW BYTE. Apple's byte handler 0x083621e8
+             * starts the next byte with a read-modify-write of IICCON, then
+             * (0x083621b0) clears IICSTAT2 and writes back "IICCON = IICCON".
+             * On silicon that write-back reads bit 4 clear: the byte it just
+             * started takes 90 us on the wire, the tail a few instructions.
+             * Here the byte timer runs on the virtual clock, which keeps
+             * moving while the guest is slowed down (host load, a debugger),
+             * so the timer can expire inside the tail. The write-back then
+             * carries bit 4 set; taken as a go, it would send IICDS again --
+             * turning a set-pointer to MBCS1 (0x4b) into a write of 0x4b to
+             * it, so the read that follows answers from the wrong register --
+             * or receive an extra byte. The IICSTAT2 clear in the same tail
+             * can also wipe the byte's event.
+             *
+             * Every real go follows a new IICDS byte (written to send, read
+             * after receiving) or a START. A go without one in a transfer
+             * leaves the byte pending and re-asserts its event, so the
+             * handler runs for it as it would have on hardware.
+             */
+            if (!s->ds_fresh && (mode == S5L8702_IICSTAT_START_TX ||
+                                 mode == S5L8702_IICSTAT_START_RX)) {
+                if (i2c_trace_bytes_on()) {
+                    fprintf(stderr, "I2C   write-back held\n");
+                }
+                s->iicstat2 |= S5L8702_IICSTAT2_BYTE;
+            } else {
+                ipod_classic_i2c_go(s);
+            }
         }
         ipod_classic_i2c_update_irq(s);
         break;
@@ -245,6 +277,10 @@ static void ipod_classic_i2c_write(void *opaque, hwaddr offset,
             break;
         }
 
+        if (mode == S5L8702_IICSTAT_START_TX ||
+            mode == S5L8702_IICSTAT_START_RX) {
+            s->ds_fresh = true;
+        }
         switch (mode) {
         case S5L8702_IICSTAT_START_TX:
             ipod_classic_i2c_set_lrb(s, ipod_classic_i2c_open(s, false));
@@ -278,6 +314,7 @@ static void ipod_classic_i2c_write(void *opaque, hwaddr offset,
         break;
     case S5L8702_IICDS:
         s->iicds = value;
+        s->ds_fresh = true;
         break;
     case S5L8702_IICUNK10:
         /* Written as 0 by Apple's block init; nothing reads it back. */
@@ -320,6 +357,7 @@ static void ipod_classic_i2c_reset(DeviceState *dev)
     s->iicunk18 = 0;
     s->iicstat2 = 0;
     s->byte_done = false;
+    s->ds_fresh = false;
     s->in_address = false;
     ipod_classic_i2c_update_irq(s);
     ipod_classic_i2c_close(s);
@@ -341,8 +379,8 @@ static void ipod_classic_i2c_init(Object *obj)
 
 static const VMStateDescription vmstate_ipod_classic_i2c = {
     .name = TYPE_IPOD_CLASSIC_I2C,
-    .version_id = 1,
-    .minimum_version_id = 1,
+    .version_id = 2,
+    .minimum_version_id = 2,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(iiccon, IPodClassicI2CState),
         VMSTATE_UINT32(iicstat, IPodClassicI2CState),
@@ -352,6 +390,7 @@ static const VMStateDescription vmstate_ipod_classic_i2c = {
         VMSTATE_UINT32(iicunk18, IPodClassicI2CState),
         VMSTATE_UINT32(iicstat2, IPodClassicI2CState),
         VMSTATE_BOOL(byte_done, IPodClassicI2CState),
+        VMSTATE_BOOL(ds_fresh, IPodClassicI2CState),
         VMSTATE_BOOL(in_address, IPodClassicI2CState),
         VMSTATE_TIMER_PTR(byte_timer, IPodClassicI2CState),
         VMSTATE_END_OF_LIST()

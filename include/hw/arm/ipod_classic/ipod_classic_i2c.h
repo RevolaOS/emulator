@@ -78,9 +78,11 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicI2CState, IPOD_CLASSIC_I2C)
  * then write IICCON to start the byte, and only then clear the previous
  * interrupt in IICSTAT2. If the byte finished the instant IICCON was written,
  * that clear would wipe out the interrupt it just raised and the transfer
- * would stop for ever. 9 bits at 100 kHz is 90 us on real silicon; 25 is
- * enough to be after the driver's own tail and far inside every timeout it
- * uses.
+ * would stop for ever. 9 bits at 100 kHz is 90 us on real silicon; 25 ends
+ * after the driver's own tail when the guest runs at speed and is far inside
+ * every timeout it uses. The clock is virtual, so a slowed guest can still
+ * see the byte end inside its tail; the write-back note in
+ * ipod_classic_i2c_write covers that case.
  */
 #define S5L8702_I2C_BYTE_US   25
 
@@ -130,6 +132,12 @@ struct IPodClassicI2CState {
 
     /* IICCON bit 4 as the hardware sees it: a byte has finished, go is armed. */
     bool byte_done;
+    /*
+     * IICDS has been written or read, or a START issued, since the last go
+     * started a byte. A go without it is a write-back, not a new byte; see
+     * ipod_classic_i2c_write.
+     */
+    bool ds_fresh;
     /* Set between IICSTAT = 0xf0/0xb0 and the address byte completing. */
     bool in_address;
 
