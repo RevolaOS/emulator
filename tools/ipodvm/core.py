@@ -43,6 +43,17 @@ WHEEL_KEYS = {'q', 'e'}
 # hold) and at most WHEEL_WAIT or BUTTON_WAIT s.
 WHEEL_WAIT, BUTTON_WAIT = 3.0, 5.0
 POLL, SETTLE_HOLDS, KEY_FLOOR = 0.25, 2, 0.4
+# Areas that change on their own (marquee labels, scrolling captions) are found
+# by sampling ANIMATION_SAMPLES frames POLL s apart before a verified press and
+# are left out of its comparison. Each changed band of rows (gaps up to
+# ANIMATION_GAP rows joined) becomes a box padded by ANIMATION_PAD px, since
+# moving text soon covers pixels next to where it was sampled.
+ANIMATION_SAMPLES, ANIMATION_GAP, ANIMATION_PAD = 6, 2, 4
+# A change no taller than SMALL_CHANGE px below the title bar may be a marquee
+# that was paused while sampling, so the screen is sampled again before it counts.
+SMALL_CHANGE, TITLE_BAR = 60, 21
+# Beyond this fraction of the compared area masked, a press cannot be verified.
+MAX_ANIMATED = 0.5
 KEY_NAMES = {'select': 'ret', 'menu': 'w', 'up': 'q', 'down': 'e',
              'prev': 'a', 'next': 'd', 'play': 's'}
 VALID_KEYS = set(KEY_NAMES) | set(KEY_NAMES.values())
@@ -346,14 +357,75 @@ def read_ppm(data):
     return width, height, data[offset + 1:offset + 1 + width * height * 3]
 
 
-def digest(frame, region=None):
-    width, height, rgb = frame
+def compared_area(frame, region):
+    """(x0, y0, x1, y1) of `region` (X, Y, W, H) clipped to the frame, or all of it."""
+    width, height, _ = frame
     if region is None:
-        return hashlib.sha1(rgb).hexdigest()
+        return 0, 0, width, height
     x, y, w, h = region
-    rows = (rgb[((y + row) * width + x) * 3:((y + row) * width + x + w) * 3]
-            for row in range(h) if y + row < height)
-    return hashlib.sha1(b''.join(rows)).hexdigest()
+    return max(x, 0), max(y, 0), min(x + w, width), min(y + h, height)
+
+
+def row_spans(y, left, right, mask):
+    """Parts of row `y` between `left` and `right` outside the mask boxes."""
+    spans = [(left, right)]
+    for x0, y0, x1, y1 in mask:
+        if y0 <= y < y1:
+            spans = [s for lo, hi in spans
+                     for s in ((lo, min(hi, x0)), (max(lo, x1), hi)) if s[0] < s[1]]
+    return spans
+
+
+def digest(frame, region=None, mask=()):
+    """Hash the frame, or its `region`, leaving out the `mask` boxes."""
+    width, height, rgb = frame
+    if region is None and not mask:
+        return hashlib.sha1(rgb).hexdigest()
+    left, top, right, bottom = compared_area(frame, region)
+    parts = (rgb[(y * width + lo) * 3:(y * width + hi) * 3]
+             for y in range(top, bottom) for lo, hi in row_spans(y, left, right, mask))
+    return hashlib.sha1(b''.join(parts)).hexdigest()
+
+
+def changed_rows(a, b, region=None, mask=()):
+    """{y: (x0, x1)} spans of the pixels that differ between frames `a` and `b`,
+    inside `region` and outside the `mask` boxes."""
+    width, _, pa = a
+    pb = b[2]
+    left, top, right, bottom = compared_area(a, region)
+
+    def same(y, x0, x1):
+        return pa[(y * width + x0) * 3:(y * width + x1) * 3] == \
+            pb[(y * width + x0) * 3:(y * width + x1) * 3]
+
+    rows = {}
+    for y in range(top, bottom):
+        for lo, hi in row_spans(y, left, right, mask):
+            if same(y, lo, hi):
+                continue
+            x0 = next(x for x in range(lo, hi) if not same(y, x, x + 1))
+            x1 = next(x for x in range(hi - 1, lo - 1, -1) if not same(y, x, x + 1)) + 1
+            if y in rows:
+                x0, x1 = min(x0, rows[y][0]), max(x1, rows[y][1])
+            rows[y] = (x0, x1)
+    return rows
+
+
+def bands(rows, frame):
+    """Group changed rows into padded (x0, y0, x1, y1) boxes, one per run of
+    nearby rows, each as wide as that run's changes."""
+    width, height, _ = frame
+    boxes = []
+    for y in sorted(rows):
+        x0, x1 = rows[y]
+        if boxes and y - boxes[-1][3] <= ANIMATION_GAP:
+            b = boxes[-1]
+            boxes[-1] = [min(b[0], x0), b[1], max(b[2], x1), y + 1]
+        else:
+            boxes.append([x0, y, x1, y + 1])
+    return [(max(x0 - ANIMATION_PAD, 0), max(y0 - ANIMATION_PAD, 0),
+             min(x1 + ANIMATION_PAD, width), min(y1 + ANIMATION_PAD, height))
+            for x0, y0, x1, y1 in boxes]
 
 
 def is_blank(frame):
@@ -951,15 +1023,15 @@ def asleep(regs):
     return regs.get('pc', 0) in STANDBY_WFI
 
 
-def settle_frame(qmp, before, limit, region=None, floor=0.0):
-    """Poll the running guest until the frame (or region) differs from `before`
-    and the next SETTLE_HOLDS polls match it, but no sooner than `floor` and no
-    later than `limit` seconds. Return the last digest."""
+def settle_frame(qmp, before, limit, region=None, floor=0.0, mask=()):
+    """Poll the running guest until the frame (or region, outside `mask`)
+    differs from `before` and the next SETTLE_HOLDS polls match it, but no
+    sooner than `floor` and no later than `limit` seconds. Return the last digest."""
     started = time.monotonic()
     changed, holds = None, 0
     while True:
         time.sleep(POLL)
-        current = digest(qmp.frame(), region)
+        current = digest(qmp.frame(), region, mask)
         if current != before:
             holds = holds + 1 if current == changed else 0
             changed = current
@@ -968,7 +1040,7 @@ def settle_frame(qmp, before, limit, region=None, floor=0.0):
             return current
 
 
-def press(qmp, keys, pause=False, region=None):
+def press(qmp, keys, pause=False, region=None, mask=()):
     """Resume, send each key and wait for the screen to settle; pause afterwards
     if asked. A key that changes nothing waits its full limit."""
     keys = [KEY_NAMES.get(k, k) for k in keys]
@@ -977,10 +1049,10 @@ def press(qmp, keys, pause=False, region=None):
         raise Failure(f'unknown keys {unknown}; use {sorted(VALID_KEYS)}')
     qmp.cont()
     for key in keys:
-        before = digest(qmp.frame(), region)
+        before = digest(qmp.frame(), region, mask)
         qmp.hmp(f'sendkey {key} 200')
         settle_frame(qmp, before, WHEEL_WAIT if key in WHEEL_KEYS else BUTTON_WAIT, region,
-                     KEY_FLOOR)
+                     KEY_FLOOR, mask)
     if pause:
         qmp.stop()
 
@@ -998,42 +1070,98 @@ def key(name, keys, pause=False):
     return result
 
 
+def animated_boxes(qmp, first, region=None):
+    """Run the guest for ANIMATION_SAMPLES polls and return boxes around the
+    parts of the frame (or region) that changed from `first` on their own."""
+    qmp.cont()
+    rows = {}
+    for _ in range(ANIMATION_SAMPLES):
+        time.sleep(POLL)
+        for y, (x0, x1) in changed_rows(first, qmp.frame(), region).items():
+            rows[y] = (min(x0, rows[y][0]), max(x1, rows[y][1])) if y in rows else (x0, x1)
+    return bands(rows, first)
+
+
+def masked_fraction(frame, region, mask):
+    left, top, right, bottom = compared_area(frame, region)
+    total = (right - left) * (bottom - top)
+    kept = sum(hi - lo for y in range(top, bottom) for lo, hi in row_spans(y, left, right, mask))
+    return 1 - kept / total if total else 0.0
+
+
 def press_verified(qmp, which, region=None, attempts=3, settle=25.0, touch=('q', 'e')):
     """Press Select/Menu until the frame (or region) changes, retrying safely.
+
+    Areas that animate on their own are sampled first and ignored, so a
+    marquee cannot pass for a landed press. A small change is sampled again
+    before it counts, in case the marquee was paused during the first sample.
+    If most of the screen animates, the press is sent once and not verified.
 
     An unchanged frame gets up to `settle` more seconds of guest time first
     (slow screens), returning as soon as the change has settled. A retry
     follows a wheel touch only if the touch left the frame unchanged;
     otherwise the first press may have landed late, or the touch moved the
     selection, and retrying could double-apply.
+
+    Returns {'attempts', 'animated' (masked X, Y, W, H boxes), 'warning'?}.
     """
     key_name = KEY_NAMES.get(which, which)
-    before = digest(qmp.frame(), region)
-    for attempt in range(1, attempts + 1):
+    first = qmp.frame()
+    mask = animated_boxes(qmp, first, region)
+
+    def result(attempt, **extra):
+        return {'attempts': attempt,
+                'animated': [[x0, y0, x1 - x0, y1 - y0] for x0, y0, x1, y1 in mask], **extra}
+
+    if masked_fraction(first, region, mask) > MAX_ANIMATED:
         press(qmp, [key_name], region=region)
-        if digest(qmp.frame(), region) != before:
-            return attempt
-        if settle_frame(qmp, before, settle, region) != before:
-            return attempt
+        return result(1, warning=f'{which}: most of the screen animates on its own, so the '
+                                 f'press was sent once without verifying it landed')
+    before_frame = qmp.frame()
+    before = digest(before_frame, region, mask)
+
+    def landed():
+        nonlocal before
+        after = qmp.frame()
+        rows = changed_rows(before_frame, after, region, mask)
+        if not rows:
+            return False
+        if max(rows) - min(rows) < SMALL_CHANGE and min(rows) >= TITLE_BAR:
+            mask.extend(animated_boxes(qmp, after, region))
+            before = digest(before_frame, region, mask)
+            return bool(changed_rows(before_frame, after, region, mask))
+        return True
+
+    for attempt in range(1, attempts + 1):
+        press(qmp, [key_name], region=region, mask=mask)
+        if landed():
+            return result(attempt)
+        if settle_frame(qmp, before, settle, region, mask=mask) != before and landed():
+            return result(attempt)
         if attempt == attempts:
             raise Failure(f'{which}: screen unchanged after {attempt} attempts; '
                           f'{qmp.shot(which + "-dropped")}')
-        press(qmp, list(touch), region=region)
-        if digest(qmp.frame(), region) != before:
+        press(qmp, list(touch), region=region, mask=mask)
+        if digest(qmp.frame(), region, mask) != before:
             raise Failure(f'{which}: the wheel touch changed the screen, so the first press '
                           f'may have landed late or the list was at an edge; not retrying. '
                           f'Check {qmp.shot(which + "-touch-changed")}')
         log(f'{which}: attempt {attempt} looked dropped; retrying')
-    return attempts
+    return result(attempts)
 
 
 def button(name, which, region=None, attempts=3, settle=25.0, pause=False):
     run = run_dir(name)
     with QMP(run) as qmp:
-        attempt = press_verified(qmp, which, region, attempts, settle)
+        verified = press_verified(qmp, which, region, attempts, settle)
         if pause:
             qmp.stop()
-        return {'shot': str(qmp.shot(which)), 'attempts': attempt}
+        result = {'shot': str(qmp.shot(which)), 'attempts': verified['attempts']}
+        if verified['animated']:
+            result['animated'] = verified['animated']
+        if 'warning' in verified:
+            result['warning'] = verified['warning']
+        return result
 
 
 ASLEEP_SPEED = 16

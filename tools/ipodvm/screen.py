@@ -316,10 +316,13 @@ def open_row(qmp, data, target, steps):
     """Select the highlighted row and return the screen it leads to."""
     top_row = data['selected'] == 0
     region = list_region(data)
-    attempt = press_verified(qmp, 'select', region, touch=('e', 'q') if top_row else ('q', 'e'))
+    verified = press_verified(qmp, 'select', region,
+                              touch=('e', 'q') if top_row else ('q', 'e'))
+    attempt = verified['attempts']
     data = read_with(qmp, f'open-{target}')
     steps.append(f'select {target!r} -> {data["title"]!r}'
-                 + (f' (attempt {attempt})' if attempt > 1 else ''))
+                 + (f' (attempt {attempt})' if attempt > 1 else '')
+                 + (f' ({verified["warning"]})' if 'warning' in verified else ''))
     return data
 
 

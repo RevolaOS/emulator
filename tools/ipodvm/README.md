@@ -129,7 +129,7 @@ edge (shown for about two seconds after scrolling).
 | Command | Behaviour |
 | --- | --- |
 | `key KEYS…` | resume, send each key and wait for the screen to settle, screenshot; reports whether the frame changed and `woke` if the guest was in standby |
-| `select`, `menu` | press and verify the frame changed; if not, run the guest up to `--settle` s (default 25) more, then wheel-touch and retry only if the touch left the frame unchanged |
+| `select`, `menu` | sample the screen for 1.5 s to find areas that animate on their own, press, and verify the frame changed outside them; if not, run the guest up to `--settle` s (default 25) more, then wheel-touch and retry only if the touch left the frame unchanged |
 | `wait --until change\|stable\|asleep` | run the guest until the frame differs from the start, two polls match, or the firmware is in standby (at `--speed`, default 16 for `asleep`) |
 | `run [N] [--speed F]`, `pause` | resume (for N seconds, then pause) or pause |
 | `shot [FILE]` | screenshot (default: next file in `shots/`) |
@@ -150,10 +150,17 @@ keeps animating, waits the full limit: 3 s after a wheel key, 5 s after a
 button. The screenshot can lag the guest, so an unchanged frame does not prove
 a dropped key.
 
-A successful QMP reply only means the key was delivered. Rows with animated
-previews (the main menu's Settings row scrolls a marquee) change the frame on
-their own; pass `--region X,Y,W,H` to compare only a stable area such as the
-title bar (`--region 0,0,150,20`). The wheel touch (`q e`, or `e q` on the
+A successful QMP reply only means the key was delivered. Marquee labels,
+scrolling captions and animated previews change the frame on their own, so
+`select` and `menu` first record which bands of the screen change without
+input and leave them out of the comparison (the result's `animated` lists them
+as `[x, y, w, h]`). A change of at most 60 rows below the title bar is sampled
+again before it counts, in case a marquee was paused during the first sample.
+Text changing inside an animated band, such as a value next to a scrolling
+label, is not seen. When more than half of the compared area animates, the
+press is sent once, not retried, and the result carries a `warning`.
+`--region X,Y,W,H` narrows the comparison to a stable area such as the title
+bar (`--region 0,0,150,20`). The wheel touch (`q e`, or `e q` on the
 top row in `goto`) can move the selection at a list edge; the press then
 stops and reports instead of retrying.
 

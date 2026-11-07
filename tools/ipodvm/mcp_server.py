@@ -120,9 +120,11 @@ TOOLS = [
          'whether the frame changed and woke=true if the guest was in standby (the waking key is also '
          'delivered). Prefer select/menu for buttons and goto for navigation.',
          {'name': NAME, 'keys': KEYS, 'image': IMAGE, 'pause': PAUSE}, ['keys']),
-    tool('select', 'Press Select and verify the screen changed, retrying safely if dropped.',
+    tool('select', 'Press Select and verify the screen changed outside areas that animate on their own '
+         '(marquees, captions; listed in `animated`), retrying safely if dropped.',
          {'name': NAME, 'region': REGION, 'image': IMAGE, 'pause': PAUSE}),
-    tool('menu', 'Press Menu and verify the screen changed, retrying safely if dropped.',
+    tool('menu', 'Press Menu and verify the screen changed outside areas that animate on their own '
+         '(marquees, captions; listed in `animated`), retrying safely if dropped.',
          {'name': NAME, 'region': REGION, 'image': IMAGE, 'pause': PAUSE}),
     tool('screenshot', 'Return the current screen as an image.', {'name': NAME}),
     tool('wait', 'Run the guest until the screen changes, two polls match, or the '
