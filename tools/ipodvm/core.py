@@ -102,6 +102,9 @@ class QMP:
         return self
 
     def __exit__(self, *exc):
+        # The stream holds its own reference to the socket: until it closes too,
+        # QEMU keeps this client and does not greet the next one.
+        self.stream.close()
         self.socket.close()
         # A timed-out screendump can still be written after the call failed.
         self.scratch.unlink(missing_ok=True)
@@ -166,6 +169,162 @@ class QMP:
                 for n, v in re.findall(r'\bR(\d\d)=([0-9a-fA-F]{8})', text)}
         regs.update(sp=regs.get('r13', 0), lr=regs.get('r14', 0), pc=regs.get('r15', 0))
         return regs
+
+
+# ---- GDB stub ------------------------------------------------------------
+
+# QEMU's ARM register numbers: r0-r15, FPA slots 16-24, CPSR 25.
+REGISTER_NUMBERS = dict({f'r{i}': i for i in range(16)}, sp=13, lr=14, pc=15, cpsr=25)
+POINT_KINDS = {'hw': 1, 'w': 2, 'r': 3, 'a': 4}
+STOP_TIMEOUT = 10
+KEY_GAP = 1.0      # guest run time between keys sent while waiting for a hit
+
+
+class StubTimeout(Failure):
+    pass
+
+
+class GDB:
+    """One-shot client for QEMU's GDB stub on gdb.sock.
+
+    Connecting pauses the guest. QEMU removes every breakpoint on a `?` query
+    and on detach, and detach also resumes the guest, so this client sends
+    neither: points last only while one command holds the connection, and
+    closing the socket leaves the guest paused.
+    """
+
+    def __init__(self, run):
+        self.run = run
+        self.buffer = b''
+        self.socket = socket.socket(socket.AF_UNIX)
+        self.socket.settimeout(STOP_TIMEOUT)
+        try:
+            self.socket.connect(str(run / 'gdb.sock'))
+            self.command('qSupported:swbreak+;hwbreak+')
+        except OSError as error:
+            self.socket.close()
+            raise Failure(f'{run.name}: cannot reach the GDB stub ({error}); is the VM running?')
+        except Failure:
+            self.socket.close()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.socket.close()
+
+    def byte(self, deadline):
+        if not self.buffer:
+            self.socket.settimeout(max(0.01, deadline - time.time()))
+            try:
+                self.buffer = self.socket.recv(4096)
+            except TimeoutError:
+                raise StubTimeout('GDB stub did not answer') from None
+            if not self.buffer:
+                raise Failure('GDB stub disconnected')
+        byte, self.buffer = self.buffer[:1], self.buffer[1:]
+        return byte
+
+    def send(self, payload):
+        body = payload.encode('latin-1')
+        self.socket.sendall(b'$%s#%02x' % (body, sum(body) & 0xff))
+        deadline = time.time() + STOP_TIMEOUT
+        while (ack := self.byte(deadline)) != b'+':
+            if ack == b'-':
+                raise Failure(f'GDB stub rejected {payload[:24]!r}')
+
+    def receive(self, timeout=STOP_TIMEOUT):
+        deadline = time.time() + timeout
+        while self.byte(deadline) != b'$':
+            pass
+        data = bytearray()
+        while (byte := self.byte(deadline)) != b'#':
+            data += byte
+        self.byte(deadline), self.byte(deadline)    # checksum; the local stub is trusted
+        self.socket.sendall(b'+')
+        return rsp_decode(data)
+
+    def command(self, payload):
+        self.send(payload)
+        reply = self.receive()
+        if re.fullmatch(r'E[0-9a-fA-F]{2}', reply):
+            raise Failure(f'GDB {payload[:24]}: error {reply}')
+        return reply
+
+    def wait_stop(self, timeout):
+        """Return the stop reply, or None when the guest is still running at the deadline."""
+        try:
+            return parse_stop(self.receive(timeout))
+        except StubTimeout:
+            return None
+
+    def interrupt(self):
+        """Stop the guest; a stop that raced the interrupt (or a QMP pause) also counts."""
+        self.socket.sendall(b'\x03')
+        return self.wait_stop(STOP_TIMEOUT)
+
+    def step(self):
+        self.send('s')
+        return parse_stop(self.receive())
+
+    def read(self, address, length):
+        data = bytearray()
+        while len(data) < length:
+            count = min(0x400, length - len(data))
+            data += bytes.fromhex(self.command(f'm{address + len(data):x},{count:x}'))
+        return bytes(data)
+
+    def write(self, address, data):
+        for offset in range(0, len(data), 0x400):
+            chunk = data[offset:offset + 0x400]
+            self.command(f'M{address + offset:x},{len(chunk):x}:{chunk.hex()}')
+
+    def registers(self):
+        words = struct.unpack_from('<16I', bytes.fromhex(self.command('g')))
+        regs = {f'r{i}': value for i, value in enumerate(words)}
+        regs['cpsr'] = self.register(REGISTER_NUMBERS['cpsr'])
+        regs.update(sp=regs['r13'], lr=regs['r14'], pc=regs['r15'])
+        return regs
+
+    def register(self, number):
+        return struct.unpack('<I', bytes.fromhex(self.command(f'p{number:x}')))[0]
+
+    def set_register(self, number, value):
+        self.command(f'P{number:x}={struct.pack("<I", value).hex()}')
+
+    def insert(self, point):
+        if self.command('Z%d,%x,%x' % point) != 'OK':
+            raise Failure(f'GDB stub does not support {format_point(point)}')
+
+    def remove(self, point):
+        self.command('z%d,%x,%x' % point)
+
+
+def rsp_decode(data):
+    """Undo RSP escapes (`}`) and run-length encoding (`*`)."""
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        if data[i] == 0x7d:
+            i += 1
+            out.append(data[i] ^ 0x20)
+        elif data[i] == 0x2a:
+            i += 1
+            out += out[-1:] * (data[i] - 29)
+        else:
+            out.append(data[i])
+        i += 1
+    return out.decode('latin-1')
+
+
+def parse_stop(reply):
+    stop = {'signal': int(reply[1:3], 16) if reply[:1] in ('T', 'S') else None}
+    for field in reply[3:].split(';'):
+        key, _, value = field.partition(':')
+        if key in ('watch', 'rwatch', 'awatch'):
+            stop['watch'] = int(value, 16)
+    return stop
 
 
 def read_ppm(data):
@@ -910,6 +1069,171 @@ def wait(name, until='stable', timeout=60.0, interval=2.0, region=None, pause=Fa
                 qmp.stop()
         return {'shot': str(qmp.shot(f'wait-{until}')),
                 'seconds': round(time.time() - started, 1)}
+
+
+# ---- debugging -------------------------------------------------------------
+
+def parse_address(text):
+    try:
+        return int(str(text), 0)
+    except ValueError:
+        raise Failure(f'bad number {text!r}: use decimal or 0x hex') from None
+
+
+def parse_hex(text):
+    try:
+        data = bytes.fromhex(text)
+    except ValueError:
+        data = b''
+    if not data:
+        raise Failure(f'bad hex bytes {text!r}, e.g. 1eff2fe1')
+    return data
+
+
+def parse_point(text):
+    """`ADDR` (odd = Thumb), `hw:ADDR`, or `w:`/`r:`/`a:ADDR[:LEN]` -> (kind, address, length)."""
+    match = re.fullmatch(r'(?:(hw|w|r|a):)?(\w+)(?::(\w+))?', text.lower())
+    if not match or (match[3] and match[1] in (None, 'hw')):
+        raise Failure(f'bad point {text!r}: use ADDR, hw:ADDR, or w:/r:/a:ADDR[:LEN]')
+    prefix, address = match[1], parse_address(match[2])
+    if prefix in (None, 'hw'):
+        return (POINT_KINDS.get(prefix, 0), address & ~1, 2 if address & 1 else 4)
+    return (POINT_KINDS[prefix], address, parse_address(match[3]) if match[3] else 4)
+
+
+def format_point(point):
+    kind, address, length = point
+    names = {0: 'break', 1: 'hw break', 2: 'write watch', 3: 'read watch', 4: 'access watch'}
+    return f'{names[kind]} {address:#010x}' + (f'/{length}' if kind >= 2 else '')
+
+
+def hex_words(data, address):
+    """Little-endian 32-bit words, four per line."""
+    words = struct.unpack_from(f'<{len(data) // 4}I', data)
+    return [f'{address + 4 * i:#010x}: ' + ' '.join(f'{w:08x}' for w in words[i:i + 4])
+            for i in range(0, len(words), 4)]
+
+
+def parse_dump(text, regs):
+    """`ADDR:LEN` or `REG:LEN` (e.g. r0:64, sp:128)."""
+    where, _, length = text.partition(':')
+    base = regs[where.lower()] if where.lower() in REGISTER_NUMBERS else parse_address(where)
+    return base, parse_address(length) if length else 64
+
+
+def snapshot(gdb, stop, points, dumps, stack):
+    regs = gdb.registers()
+    pc = regs['pc']
+    hit = next((p for p in points if p[0] >= 2 and stop.get('watch') is not None
+                and p[1] <= stop['watch'] < p[1] + p[2]), None)
+    hit = hit or next((p for p in points if p[0] < 2 and p[1] == pc), None)
+    state = {'point': format_point(hit) if hit else None,
+             'registers': {k: f'{v:#010x}' for k, v in regs.items() if k not in ('r13', 'r14', 'r15')}}
+    if 'watch' in stop:
+        state['watch'] = f'{stop["watch"]:#010x}'
+    memory = [(regs['sp'], stack)] if stack else []
+    memory += [parse_dump(d, regs) for d in dumps or ()]
+    state['memory'] = {f'{base:#010x}': hex_words(gdb.read(base, length), base)
+                       for base, length in memory}
+    return state
+
+
+def peek(name, address, length=64):
+    address = parse_address(address)
+    with GDB(run_dir(name)) as gdb:
+        data = gdb.read(address, length)
+    return {'address': f'{address:#010x}', 'hex': data.hex(), 'words': hex_words(data, address)}
+
+
+def poke(name, address, data):
+    """Write bytes while paused; the reply keeps the original bytes for undoing the patch."""
+    address = parse_address(address)
+    with GDB(run_dir(name)) as gdb:
+        before = gdb.read(address, len(data))
+        gdb.write(address, data)
+        after = gdb.read(address, len(data))
+    if after != data:
+        raise Failure(f'{address:#010x}: wrote {data.hex()}, read back {after.hex()}')
+    return {'address': f'{address:#010x}', 'before': before.hex(), 'after': after.hex()}
+
+
+def poke_bytes(values, words=False):
+    if words:
+        return b''.join(struct.pack('<I', parse_address(v)) for v in values)
+    return parse_hex(''.join(values))
+
+
+def set_register(name, register, value):
+    number = REGISTER_NUMBERS.get(register.lower())
+    if number is None:
+        raise Failure(f'unknown register {register!r}; use r0-r15, sp, lr, pc or cpsr')
+    with GDB(run_dir(name)) as gdb:
+        gdb.set_register(number, parse_address(value))
+        return {'register': register, 'value': f'{gdb.register(number):#010x}'}
+
+
+def step(name, count=1):
+    with GDB(run_dir(name)) as gdb:
+        pcs = []
+        for _ in range(count):
+            gdb.step()
+            pcs.append(f'{gdb.registers()["pc"]:#010x}')
+        state = snapshot(gdb, {}, [], (), 0)
+    return {'pcs': pcs, 'registers': state['registers']}
+
+
+def debug_break(name, points, keys=None, timeout=60.0, dumps=None, stack=64, hits=1):
+    """Run until a breakpoint or watchpoint hits, `hits` times, and report the state at each.
+
+    Keys are sent over QMP while the guest runs. Points are removed before
+    returning and the guest is left paused, also on a timeout.
+    """
+    points = [parse_point(p) for p in points]
+    keys = [KEY_NAMES.get(k, k) for k in keys or ()]
+    unknown = [k for k in keys if k not in VALID_KEYS]
+    if unknown:
+        raise Failure(f'unknown keys {unknown}; use {sorted(VALID_KEYS)}')
+    run = run_dir(name)
+    result = {'points': [format_point(p) for p in points], 'hits': []}
+    with QMP(run) as qmp, GDB(run) as gdb:
+        inserted = []
+        running = False
+        try:
+            for point in points:
+                gdb.insert(point)
+                inserted.append(point)
+            deadline = time.time() + timeout
+            while len(result['hits']) < hits:
+                if result['hits']:
+                    for point in inserted:      # step off the point that stopped us
+                        gdb.remove(point)
+                    gdb.step()
+                    for point in inserted:
+                        gdb.insert(point)
+                gdb.send('c')
+                running = True
+                stop = None
+                for key in (keys if not result['hits'] else ()):
+                    qmp.hmp(f'sendkey {key} 200')
+                    stop = gdb.wait_stop(KEY_GAP)
+                    if stop:
+                        break
+                stop = stop or gdb.wait_stop(max(0.0, deadline - time.time()))
+                if stop is None:
+                    break
+                running = False
+                result['hits'].append(snapshot(gdb, stop, points, dumps, stack))
+        finally:
+            if running:
+                gdb.interrupt()
+            for point in inserted:
+                gdb.remove(point)
+        result['hit'] = bool(result['hits'])
+        if not result['hit']:
+            regs = gdb.registers()
+            result.update(pc=f'{regs["pc"]:#010x}', lr=f'{regs["lr"]:#010x}')
+        result['shot'] = str(qmp.shot('break'))
+    return result
 
 
 # ---- profiling --------------------------------------------------------------

@@ -145,6 +145,36 @@ TOOLS = [
          ['action']),
     tool('hmp', 'Run a raw QEMU HMP command, e.g. "info registers".',
          {'name': NAME, 'command': {'type': 'string'}}, ['command']),
+    tool('mem_read', 'Read guest memory over the GDB stub (pauses the guest).',
+         {'name': NAME, 'address': {'type': 'string', 'description': 'e.g. "0x081215d8"'},
+          'length': {'type': 'integer', 'description': 'bytes (default 64)'}}, ['address']),
+    tool('mem_write', 'Write guest memory, e.g. a live code patch (pauses the guest). Returns '
+         'the replaced bytes; write them back to undo.',
+         {'name': NAME, 'address': {'type': 'string'},
+          'hex': {'type': 'string', 'description': 'bytes, e.g. "1eff2fe1" (ARM bx lr)'},
+          'words': {'type': 'array', 'items': {'type': 'string'},
+                    'description': '32-bit little-endian words instead of hex, e.g. '
+                    '["0xe12fff1e"]'}},
+         ['address']),
+    tool('debug_break', 'Run until a breakpoint or watchpoint hits and return registers, '
+         'stack and requested memory at each hit, plus a screenshot. Points last only for '
+         'this call; the guest is left paused, also on a timeout.',
+         {'name': NAME,
+          'points': {'type': 'array', 'items': {'type': 'string'},
+                     'description': '"0xADDR" (odd = Thumb), "hw:0xADDR", or watchpoints '
+                     '"w:0xADDR[:LEN]" (write), "r:..." (read), "a:..." (access)'},
+          'keys': KEYS, 'timeout': {'type': 'number', 'description': 'seconds (default 60)'},
+          'hits': {'type': 'integer', 'description': 'hits to collect (default 1)'},
+          'dump': {'type': 'array', 'items': {'type': 'string'},
+                   'description': 'memory to read at each hit, "0xADDR:LEN" or "r0:LEN"'},
+          'stack': {'type': 'integer', 'description': 'bytes from SP per hit (default 64)'},
+          'image': IMAGE},
+         ['points']),
+    tool('debug_step', 'Single-step the paused guest; returns each PC and the final registers.',
+         {'name': NAME, 'count': {'type': 'integer'}}),
+    tool('reg_write', 'Set a register of the paused guest (r0-r15, sp, lr, pc, cpsr).',
+         {'name': NAME, 'register': {'type': 'string'}, 'value': {'type': 'string'}},
+         ['register', 'value']),
 ]
 
 
@@ -212,6 +242,21 @@ def call(name, a):
         return core.profile_control(vm, a['action'])
     if name == 'hmp':
         return core.hmp(vm, a['command'])
+    if name == 'mem_read':
+        return core.peek(vm, a['address'], a.get('length', 64))
+    if name == 'mem_write':
+        if bool(a.get('hex')) == bool(a.get('words')):
+            raise core.Failure('mem_write takes either hex or words')
+        data = core.poke_bytes(a['words'], words=True) if a.get('words') else \
+            core.poke_bytes([a['hex']])
+        return core.poke(vm, a['address'], data)
+    if name == 'debug_break':
+        return core.debug_break(vm, a['points'], a.get('keys'), a.get('timeout', 60),
+                                a.get('dump'), a.get('stack', 64), a.get('hits', 1))
+    if name == 'debug_step':
+        return core.step(vm, a.get('count', 1))
+    if name == 'reg_write':
+        return core.set_register(vm, a['register'], a['value'])
     raise core.Failure(f'unknown tool {name}')
 
 

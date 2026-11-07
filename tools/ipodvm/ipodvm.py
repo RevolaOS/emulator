@@ -104,6 +104,31 @@ def show_profile(data, top, heap_only=False):
         print(f'shot    {data["shot"]}')
 
 
+def show_state(state):
+    regs = state['registers']
+    names = [f'r{i}' for i in range(13)] + ['sp', 'lr', 'pc', 'cpsr']
+    for row in range(0, len(names), 4):
+        print('  ' + '  '.join(f'{n:>4}={regs[n]}' for n in names[row:row + 4]))
+    for base, lines in state.get('memory', {}).items():
+        print(f'  memory at {base}:')
+        for line in lines:
+            print(f'    {line}')
+
+
+def show_debug(data):
+    if 'pcs' in data:
+        print('stepped: ' + ' '.join(data['pcs']))
+        show_state(data)
+        return
+    for number, hit in enumerate(data['hits'], 1):
+        watch = f' (access at {hit["watch"]})' if hit.get('watch') else ''
+        print(f'hit {number}: {hit["point"] or "unknown point"}{watch}')
+        show_state(hit)
+    if not data['hit']:
+        print(f'no hit ({", ".join(data["points"])}); paused at PC={data["pc"]} LR={data["lr"]}')
+    print(f'shot    {data["shot"]}')
+
+
 def show(command, data, args):
     if args.json:
         print(json.dumps(data, indent=2))
@@ -129,6 +154,10 @@ def show(command, data, args):
               f'{data["private_bytes"] / 2**20:.1f} MiB')
     elif command == 'hmp':
         print(data, end='')
+    elif command == 'peek':
+        print('\n'.join(data['words']) or data['hex'])
+    elif command in ('break', 'step'):
+        show_debug(data)
     elif command == 'status':
         print(f'{data["name"]}: {data["state"]}{" (asleep)" if data["asleep"] else ""}  '
               f'pid {data["pid"]}  PC={data["pc"]} LR={data["lr"]}')
@@ -260,6 +289,37 @@ def main():
     p = named('hmp', 'run a raw HMP command (e.g. "info registers")')
     p.add_argument('line', nargs='+')
     p.set_defaults(func=lambda a: core.hmp(a.name, ' '.join(a.line)))
+
+    p = named('peek', 'read guest memory over the GDB stub')
+    p.add_argument('address')
+    p.add_argument('length', nargs='?', type=lambda v: int(v, 0), default=64)
+    p.set_defaults(func=lambda a: core.peek(a.name, a.address, a.length))
+    p = named('poke', 'write guest memory (live patch); prints the bytes it replaced')
+    p.add_argument('address')
+    p.add_argument('values', nargs='+', help='hex bytes (e.g. 1eff2fe1), or words with --word')
+    p.add_argument('--word', action='store_true',
+                   help='values are 32-bit little-endian words (e.g. 0xe12fff1e)')
+    p.set_defaults(func=lambda a: core.poke(a.name, a.address,
+                                            core.poke_bytes(a.values, a.word)))
+    p = named('break', 'run until a breakpoint or watchpoint hits and report the state')
+    p.add_argument('points', nargs='+', metavar='POINT',
+                   help='ADDR (odd = Thumb), hw:ADDR, or w:/r:/a:ADDR[:LEN] watchpoints')
+    p.add_argument('--keys', nargs='+', default=[], help='keys to send once the guest runs')
+    p.add_argument('--timeout', type=float, default=60)
+    p.add_argument('--hits', type=int, default=1, help='hits to collect before stopping')
+    p.add_argument('--dump', action='append', metavar='ADDR|REG:LEN',
+                   help='memory to read at each hit, e.g. r0:64 (repeatable)')
+    p.add_argument('--stack', type=lambda v: int(v, 0), default=64,
+                   help='bytes from SP to read at each hit (default 64)')
+    p.set_defaults(func=lambda a: core.debug_break(
+        a.name, a.points, a.keys, a.timeout, a.dump, a.stack, a.hits))
+    p = named('step', 'single-step the paused guest')
+    p.add_argument('count', nargs='?', type=int, default=1)
+    p.set_defaults(func=lambda a: core.step(a.name, a.count))
+    p = named('reg', 'set a register of the paused guest')
+    p.add_argument('register', help='r0-r15, sp, lr, pc or cpsr')
+    p.add_argument('value')
+    p.set_defaults(func=lambda a: core.set_register(a.name, a.register, a.value))
     p = sub.add_parser('list', help='list VMs under /tmp/ipodvm')
     p.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
     p.set_defaults(func=lambda a: core.list_vms())

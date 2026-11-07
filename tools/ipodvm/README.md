@@ -165,6 +165,39 @@ In standby the firmware has gated its clocks and halted the CPU; the screen
 keeps its last frame and `screen` and `status` report `asleep`. Any key wakes
 it, and that key is also delivered to the user interface.
 
+## Debugging
+
+These commands talk to QEMU's GDB stub on the run's `gdb.sock` directly, so no
+GDB is needed. Each one pauses the guest and leaves it paused.
+
+| Command | Behaviour |
+| --- | --- |
+| `peek ADDR [LEN]` | read memory (default 64 bytes) as little-endian words |
+| `poke ADDR HEX…`, `poke ADDR --word VAL…` | write memory, e.g. `poke 0x081215d8 --word 0xe12fff1e` (`bx lr`); prints the bytes it replaced, which undo the patch when written back |
+| `break POINT… [--keys KEYS…] [--timeout S] [--hits N] [--dump WHERE:LEN] [--stack LEN]` | run until a point hits; report registers, `--stack` bytes from SP (default 64) and each `--dump` (`0xADDR:LEN` or `r0:LEN`) per hit, then screenshot |
+| `step [N]` | single-step N instructions; prints each PC and the final registers |
+| `reg NAME VALUE` | set `r0`–`r15`, `sp`, `lr`, `pc` or `cpsr` |
+
+Points: `ADDR` is a breakpoint (an odd address is Thumb), `hw:ADDR` a hardware
+breakpoint, and `w:ADDR[:LEN]`, `r:ADDR[:LEN]`, `a:ADDR[:LEN]` write, read
+and access watchpoints (default 4 bytes). `--keys` are sent 1 s of guest time
+apart once the guest runs, and sending stops at the first hit. A watchpoint
+stops before the access: PC is the accessing instruction, memory still holds
+the old value (`step` performs the access), and `watch` gives the accessed
+address.
+
+Points last only for one `break`: QEMU drops every breakpoint when a client
+detaches or sends GDB's initial `?` query, so the tool sends neither. It
+removes its points before returning and leaves the guest paused, also after a
+timeout (`hit: false` with PC and LR). After a hit, `status` reports the run
+state `debug`; `run`, `key` and the other commands resume from it as from a
+pause.
+
+Memory writes invalidate translated code, so a `poke` into code takes effect
+on the next call. The firmware copies its code into place during boot, so
+patch code after boot, or `break` on an early boot address and `poke` at the
+hit.
+
 ## MCP server
 
 ```sh
@@ -175,7 +208,8 @@ Tools: `disk_prepare`, `vm_launch` (`repo` names the firmware repository;
 relative paths resolve against it),
 `vm_list`, `vm_status`, `vm_power`, `vm_speed`, `vm_quit`, `vm_run`, `vm_pause`, `vm_prune`, `screen`, `goto`,
 `press`, `select`, `menu`, `screenshot`, `wait`, `profile_keys`,
-`profile_dump`, `profile_control` and `hmp`. Results are JSON text; pass
+`profile_dump`, `profile_control`, `hmp`, and the debugging tools `mem_read`,
+`mem_write`, `debug_break`, `debug_step` and `reg_write`. Results are JSON text; pass
 `image: true` (or use `screenshot`) to also receive the PNG. Launch takes
 tens of seconds; navigation takes a few seconds per step.
 
