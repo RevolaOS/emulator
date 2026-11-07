@@ -115,6 +115,14 @@ typedef enum IPodClassicPMUPower {
 #define PCF50635_GPIOSTAT_HOLD_OFF  0x02
 
 /*
+ * INT6 bit 1, PCF50635_INT6_GPIO2 in Rockbox's pmu-target.h: the hold switch
+ * changed position. Rockbox unmasks it as "Holdswitch" (pmu-6g.c). Firmware
+ * 2.0.5 leaves it unmasked too (INT6M 0xfd), and its PMU event mapping
+ * 0x0836414c turns it into event 0x200, on which 0x080559dc re-reads GPIOSTAT.
+ */
+#define PCF50635_INT6_HOLD          0x02
+
+/*
  * ASSUMED. 844 of 1023 is 3900 mV through Rockbox's own conversion in
  * pmu-6g.c (raw * 2000 / 1023 + 2250). Nothing in our sources says what a real
  * cell reads; this is chosen to be an ordinary value rather than an
@@ -139,6 +147,7 @@ struct IPodClassicPMUState {
     bool wrote_data;
 
     IPodClassicPMUPower power;
+    bool hold;            /* the hold switch is in the locked position */
 
     /* The chip's INT output, active low; see pmu_update_irq. */
     qemu_irq irq;
@@ -149,5 +158,11 @@ struct IPodClassicPMUState {
  * read on, and INT1 latches the matching insert/remove events.
  */
 void ipod_classic_pmu_set_power(IPodClassicPMUState *s, IPodClassicPMUPower power);
+
+/*
+ * Move the hold switch: GPIOSTAT reports the new position from the next read
+ * on, and INT6 latches the change event.
+ */
+void ipod_classic_pmu_set_hold(IPodClassicPMUState *s, bool hold);
 
 #endif

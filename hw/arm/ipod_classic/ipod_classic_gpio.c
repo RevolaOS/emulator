@@ -8,6 +8,8 @@
  * Deliberately minimal. Reads of PDAT return modelled INPUT levels, which are
  * all zero except pin 86; that is bit-for-bit what create_unimplemented_device()
  * used to return, so nothing else in the machine can have changed behaviour.
+ * Pin configuration (PCON, and GPIOCMD folded into it) is kept, and E2/E4
+ * drive the "wheel-lines" output to the click wheel; see the header.
  *
  * GPIOTRACE=1 prints every access with the guest PC, like ATATRACE and
  * LCDTRACE.
@@ -16,6 +18,7 @@
 #include "qemu/osdep.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
+#include "hw/irq.h"
 #include "hw/qdev-properties.h"
 #include "migration/vmstate.h"
 #include "hw/core/cpu.h"
@@ -37,6 +40,18 @@ static uint32_t gpio_trace_pc(void)
 {
     CPUState *cs = current_cpu;
     return cs ? (uint32_t)CPU_GET_CLASS(cs)->get_pc(cs) : 0;
+}
+
+static unsigned gpio_function(IPodClassicGPIOState *s, unsigned pin)
+{
+    return (s->pcon[pin / 8] >> ((pin % 8) * 4)) & 0xf;
+}
+
+static void gpio_update_wheel_lines(IPodClassicGPIOState *s)
+{
+    qemu_set_irq(s->wheel_lines,
+                 gpio_function(s, S5L8702_GPIO_WHEEL_A) == S5L8702_GPIO_FUNC_WHEEL &&
+                 gpio_function(s, S5L8702_GPIO_WHEEL_B) == S5L8702_GPIO_FUNC_WHEEL);
 }
 
 static uint64_t ipod_classic_gpio_read(void *opaque, hwaddr offset,
@@ -93,6 +108,18 @@ static void ipod_classic_gpio_write(void *opaque, hwaddr offset,
                 "pc~0x%08x\n", offset, (uint32_t)value, gpio_trace_pc());
     }
 
+    if (offset == S5L8702_GPIO_CMD) {
+        unsigned cmd_group = (value >> 16) & 0xff;
+        unsigned shift = ((value >> 8) & 7) * 4;
+
+        if (cmd_group < S5L8702_GPIO_GROUPS) {
+            s->pcon[cmd_group] = (s->pcon[cmd_group] & ~(0xfu << shift)) |
+                                 ((value & 0xf) << shift);
+            gpio_update_wheel_lines(s);
+        }
+        return;
+    }
+
     if (group >= S5L8702_GPIO_GROUPS) {
         qemu_log_mask(LOG_UNIMP, "s5l8702.gpio: write of 0x%" PRIx64 " to +0x%"
                       HWADDR_PRIx ", past the sixteen groups\n", value, offset);
@@ -102,6 +129,7 @@ static void ipod_classic_gpio_write(void *opaque, hwaddr offset,
     switch (reg) {
     case S5L8702_GPIO_PCON:
         s->pcon[group] = value;
+        gpio_update_wheel_lines(s);
         break;
     case S5L8702_GPIO_PUNA:
         s->puna[group] = value;
@@ -161,6 +189,7 @@ static void ipod_classic_gpio_reset(DeviceState *dev)
         s->pdat[S5L8702_GPIO_PIN_MEDIA / 8] |=
             1u << (S5L8702_GPIO_PIN_MEDIA % 8);
     }
+    gpio_update_wheel_lines(s);
 }
 
 static Property ipod_classic_gpio_props[] = {
@@ -176,12 +205,20 @@ static void ipod_classic_gpio_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->iomem, OBJECT(s), &ipod_classic_gpio_ops, s,
                           TYPE_IPOD_CLASSIC_GPIO, S5L8702_GPIO_MEM_SIZE);
     sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->iomem);
+    qdev_init_gpio_out_named(dev, &s->wheel_lines, "wheel-lines", 1);
+}
+
+static int gpio_post_load(void *opaque, int version_id)
+{
+    gpio_update_wheel_lines(opaque);
+    return 0;
 }
 
 static const VMStateDescription vmstate_ipod_classic_gpio = {
     .name = TYPE_IPOD_CLASSIC_GPIO,
     .version_id = 1,
     .minimum_version_id = 1,
+    .post_load = gpio_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(pcon, IPodClassicGPIOState, S5L8702_GPIO_GROUPS),
         VMSTATE_UINT32_ARRAY(pdat, IPodClassicGPIOState, S5L8702_GPIO_GROUPS),

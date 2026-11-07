@@ -854,7 +854,7 @@ def status(name):
             'title': record.get('title', ''), 'firmware': record['firmware'],
             'profile': record.get('profile'), 'power': record.get('power', 'adapter'),
             'persist': record.get('persist', False), 'speed': record.get('speed', 1),
-            'run': str(run)}
+            'hold': record.get('hold', False), 'run': str(run)}
 
 
 def set_power(name, power):
@@ -870,6 +870,19 @@ def set_power(name, power):
     record['power'] = current
     (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
     return {'name': name, 'power': current, 'previous': previous}
+
+
+def set_hold(name, on):
+    """Move the Hold switch on a running VM (on = locked)."""
+    run = run_dir(name)
+    with QMP(run) as qmp:
+        previous = qmp.execute('qom-get', {'path': '/machine', 'property': 'hold'})
+        qmp.execute('qom-set', {'path': '/machine', 'property': 'hold', 'value': bool(on)})
+        current = qmp.execute('qom-get', {'path': '/machine', 'property': 'hold'})
+    record = json.loads((run / 'launch.json').read_text())
+    record['hold'] = current
+    (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
+    return {'name': name, 'hold': current, 'previous': previous}
 
 
 def apply_speed(qmp, factor):

@@ -169,6 +169,7 @@ def show(command, data, args):
         print(f'  power    {data["power"]}'
               + ('  persist (guest writes reach the run\'s disk.img)' if data['persist'] else ''))
         print(f'  speed    {data["speed"]}x')
+        print(f'  hold     {"on (locked)" if data.get("hold") else "off"}')
     else:
         for key, value in data.items():
             if value is not None:
@@ -277,11 +278,14 @@ def main():
                    help='guest speed for the N seconds, restored afterwards')
     p.set_defaults(func=lambda a: core.resume(a.name, a.seconds, a.speed))
     named('pause', 'pause the guest').set_defaults(func=lambda a: core.pause(a.name))
-    named('status', 'run state, PC/LR, standby (asleep), power, speed').set_defaults(
+    named('status', 'run state, PC/LR, standby (asleep), power, speed, hold').set_defaults(
         func=lambda a: core.status(a.name))
     p = named('power', 'plug in or unplug external power on the running VM')
     p.add_argument('power', choices=sorted(core.POWER))
     p.set_defaults(func=lambda a: core.set_power(a.name, a.power))
+    p = named('hold', 'move the Hold switch on the running VM (on = locked)')
+    p.add_argument('position', choices=['on', 'off'])
+    p.set_defaults(func=lambda a: core.set_hold(a.name, a.position == 'on'))
     p = named('speed', 'run guest time N times faster on the running VM (1 = real time)')
     p.add_argument('factor', type=int)
     p.set_defaults(func=lambda a: core.set_speed(a.name, a.factor))

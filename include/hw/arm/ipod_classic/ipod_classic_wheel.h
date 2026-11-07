@@ -304,6 +304,12 @@ struct IPodClassicWheelState {
     MemoryRegion iomem;
     qemu_irq irq;
     qemu_irq wake;      /* named GPIO "wake": low while a key is down */
+    /*
+     * Named GPIO input "lines": the GPIO block's "wheel-lines", high while
+     * pins E2/E4 are configured for the wheel. Low while the hold switch is
+     * locked or the SoC is in standby; no input reaches the guest then.
+     */
+    bool lines;
 
     /* Registers that read back what was written. */
     uint32_t con;

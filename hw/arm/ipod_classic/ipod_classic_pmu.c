@@ -30,6 +30,8 @@
  *     register file: a driver that reads them expects the bits to go away.
  *   - External power presence in MBCS1 (battery, USB or adapter), changeable
  *     while running; a change latches the INT1 insert/remove events.
+ *   - The hold switch in GPIOSTAT, changeable while running; a change latches
+ *     the INT6 hold event.
  *   - The INT output, on SoC GPIO 0x7b (see pmu_update_irq).
  *
  * WHAT IS NOT
@@ -147,6 +149,17 @@ void ipod_classic_pmu_set_power(IPodClassicPMUState *s, IPodClassicPMUPower powe
     pmu_update_irq(s);
 }
 
+void ipod_classic_pmu_set_hold(IPodClassicPMUState *s, bool hold)
+{
+    if (hold == s->hold) {
+        return;
+    }
+    /* Latches in INT6 until the firmware reads it (read to clear). */
+    s->reg[PCF50635_REG_INT6] |= PCF50635_INT6_HOLD;
+    s->hold = hold;
+    pmu_update_irq(s);
+}
+
 static void pmu_start_adc(IPodClassicPMUState *s)
 {
     uint32_t raw = pmu_battery_raw();
@@ -173,15 +186,11 @@ static uint8_t pmu_reg_read(IPodClassicPMUState *s, uint8_t addr)
         break;
     case PCF50635_REG_GPIOSTAT:
         /*
-         * The hold switch, reported OPEN unconditionally. See the long note at
-         * the reset function for why "open" is the only usable value on a
-         * machine with no switch to flip -- and why it MUST NOT depend on
-         * whatever a write has left in s->reg[0x87]. Apple's own GPIO code
-         * writes this register (measured: a byte 0x87 goes to reg 0x87), so the
-         * stored value is not reliably HOLD_OFF; forcing the read makes the
-         * keycode dispatcher's gate see "open" no matter what was written.
+         * The hold switch, from s->hold rather than s->reg[0x87], so that a
+         * guest write to this register cannot move the switch. See the long
+         * note at the reset function for what the bit gates.
          */
-        val = PCF50635_GPIOSTAT_HOLD_OFF;
+        val = s->hold ? 0 : PCF50635_GPIOSTAT_HOLD_OFF;
         break;
     case PCF5063X_REG_OOCSTAT:
         /*
@@ -354,26 +363,23 @@ static int ipod_classic_pmu_event(I2CSlave *i2c, enum i2c_event event)
 }
 
 /*
- * THE REGISTER-POINTER RACE, and why the fix lives at STOP.
+ * THE REGISTER POINTER, and why a write puts it back at STOP.
  *
- * MEASURED (temporary I2C-pointer trace): Apple's keycode dispatcher reads the
- * hold switch (GPIOSTAT, 0x87), and its power manager reads OOCSTAT (0x12) and
- * MBCS1 (0x4b), each as two I2C transactions -- one that sets the register
- * pointer, a STOP, then a one-byte read -- and the pointer survives the STOP by
- * design. Apple's GPIO housekeeping meanwhile WRITES register 0x87. When that
- * write lands between another read's set-pointer and its data phase, it moves
- * the shared pointer, so the read comes back with the wrong register: the hold
- * read saw bit 1 clear and SELECT was dropped (about five boots in eight), and
- * the OOCSTAT read saw BATOK clear and the firmware software-reset as "battery
- * empty" (about one navtest run in six).
+ * Apple's driver reads a register as two I2C transactions -- one that sets
+ * the register pointer, a STOP, then the read -- and the pointer survives the
+ * STOP by design. Firmware 2.0.5 brackets both halves with a pair of
+ * acquire calls (through 0x0802cf34, arguments 0x11 and 5) and the matching
+ * releases (through 0x0802cf3c); argument 5 alone also brackets the codec
+ * driver's I2C accesses, so it guards the bus. The hold read 0x082dc010, the
+ * MBCS1 reads 0x082dbe0c and 0x082dbfd0, the interrupt read 0x082dc2bc and
+ * the register writers all do this. An I2CTRACE=2 trace of boot and menu
+ * navigation shows every set-pointer immediately followed by its read.
  *
- * On real hardware the firmware serialises PMU access so the write never
- * interleaves; our timing does not reproduce that serialisation, so the model
- * compensates: a register write restores the pointer at STOP (above), which
- * un-clobbers whatever pointer a pending read had set. Combined with the forced
- * HOLD_OFF / healthy-status reads, the three status reads are now stable
- * regardless of interleaving. The pointer still auto-advances within a
- * transaction, so multi-byte reads and writes are unchanged.
+ * The model also restores the pointer at STOP after a register write (above),
+ * so a write that does land between another read's two halves leaves that
+ * read's pointer intact; otherwise the hold read would return the wrong
+ * register and drop the key it gates. The pointer still auto-advances within
+ * a transaction, so multi-byte reads and writes are unchanged.
  */
 static uint8_t ipod_classic_pmu_recv(I2CSlave *i2c)
 {
@@ -444,9 +450,10 @@ static void ipod_classic_pmu_reset(DeviceState *dev)
      * 0x0803f390 at all, which is exactly why it was not affected and why the
      * failure looked like a wheel bug rather than a hold switch.
      *
-     * CONVENIENCE VALUE, and marked as one: a machine with no hold switch to
-     * flip has to boot with it off or it cannot be used. The other two bits
-     * stay zero -- Rockbox marks both "TBC" and nothing we have reads them.
+     * Reads come from s->hold (see pmu_reg_read), which starts unlocked and
+     * moves through the machine's "hold" property. The register keeps its
+     * reset value for read-back consistency; the other two bits stay zero --
+     * Rockbox marks both "TBC" and nothing we have reads them.
      */
     s->reg[PCF50635_REG_GPIOSTAT] = PCF50635_GPIOSTAT_HOLD_OFF;
 
@@ -466,15 +473,19 @@ static void ipod_classic_pmu_init(Object *obj)
 {
     IPodClassicPMUState *s = IPOD_CLASSIC_PMU(obj);
 
-    /* Not in reset: a power change made at run time survives a guest reset. */
+    /*
+     * Not in reset: a power change or hold position set at run time survives
+     * a guest reset.
+     */
     s->power = pmu_initial_power();
+    s->hold = false;
     qdev_init_gpio_out_named(DEVICE(obj), &s->irq, "irq", 1);
 }
 
 static const VMStateDescription vmstate_ipod_classic_pmu = {
     .name = TYPE_IPOD_CLASSIC_PMU,
-    .version_id = 2,
-    .minimum_version_id = 2,
+    .version_id = 3,
+    .minimum_version_id = 3,
     .fields = (VMStateField[]) {
         VMSTATE_I2C_SLAVE(parent_obj, IPodClassicPMUState),
         VMSTATE_UINT8_ARRAY(reg, IPodClassicPMUState, S5L8702_PMU_NUM_REGS),
@@ -482,6 +493,7 @@ static const VMStateDescription vmstate_ipod_classic_pmu = {
         VMSTATE_BOOL(addr_pending, IPodClassicPMUState),
         VMSTATE_UINT8(addr_saved, IPodClassicPMUState),
         VMSTATE_BOOL(wrote_data, IPodClassicPMUState),
+        VMSTATE_BOOL(hold, IPodClassicPMUState),
         VMSTATE_END_OF_LIST()
     },
 };

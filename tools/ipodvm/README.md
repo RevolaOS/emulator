@@ -72,6 +72,12 @@ on USB or battery it enters standby after about two minutes idle.
 reacts at once: unplugging the adapter leaves the Charging screen, and
 plugging in wakes it from standby. `status` reports the current value.
 
+`hold on|off` moves the Hold switch on a running VM (QMP
+`qom-set /machine hold true|false`). VMs start unlocked. The PMU raises its
+hold interrupt, so the firmware re-reads the switch at once. While locked the
+firmware parks the click wheel lines, so wheel and button input is dropped;
+a key still wakes the VM from standby.
+
 `speed N` fast-forwards guest time on a running VM (QMP
 `qom-set /machine speed N`, 1–64, 1 = real time). It runs the timer block N
 times faster, and the firmware takes its kernel tick (timer B) and its
@@ -133,8 +139,9 @@ edge (shown for about two seconds after scrolling).
 | `wait --until change\|stable\|asleep` | run the guest until the frame differs from the start, two polls match, or the firmware is in standby (at `--speed`, default 16 for `asleep`) |
 | `run [N] [--speed F]`, `pause` | resume (for N seconds, then pause) or pause |
 | `shot [FILE]` | screenshot (default: next file in `shots/`) |
-| `status` | run state, standby, PC/LR, title, firmware, profiler, power, speed |
+| `status` | run state, standby, PC/LR, title, firmware, profiler, power, speed, hold |
 | `power adapter\|usb\|battery` | change the external power the PMU reports while running |
+| `hold on\|off` | move the Hold switch while running (`on` = locked) |
 | `speed N` | run guest time N times faster (1–64) while running |
 | `hmp LINE…` | raw HMP command, e.g. `hmp info registers` |
 | `list`, `quit` | list VMs under `/tmp/ipodvm`; stop one |
@@ -213,7 +220,7 @@ claude mcp add ipodvm -- python3 /path/to/qemu-ipod-classic/tools/ipodvm/mcp_ser
 
 Tools: `disk_prepare`, `vm_launch` (`repo` names the firmware repository;
 relative paths resolve against it),
-`vm_list`, `vm_status`, `vm_power`, `vm_speed`, `vm_quit`, `vm_run`, `vm_pause`, `vm_prune`, `screen`, `goto`,
+`vm_list`, `vm_status`, `vm_power`, `vm_hold`, `vm_speed`, `vm_quit`, `vm_run`, `vm_pause`, `vm_prune`, `screen`, `goto`,
 `press`, `select`, `menu`, `screenshot`, `wait`, `profile_keys`,
 `profile_dump`, `profile_control`, `hmp`, and the debugging tools `mem_read`,
 `mem_write`, `debug_break`, `debug_step` and `reg_write`. Results are JSON text; pass

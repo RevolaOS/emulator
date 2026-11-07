@@ -416,6 +416,28 @@ static void ipod_classic_set_power(Object *obj, const char *value, Error **errp)
     error_setg(errp, "power must be battery, usb or adapter, not \"%s\"", value);
 }
 
+static bool ipod_classic_get_hold(Object *obj, Error **errp)
+{
+    IPodClassicMachineState *nms = IPOD_CLASSIC_MACHINE(obj);
+
+    if (!nms->pmu) {
+        error_setg(errp, "hold: the PMU does not exist yet");
+        return false;
+    }
+    return nms->pmu->hold;
+}
+
+static void ipod_classic_set_hold(Object *obj, bool value, Error **errp)
+{
+    IPodClassicMachineState *nms = IPOD_CLASSIC_MACHINE(obj);
+
+    if (!nms->pmu) {
+        error_setg(errp, "hold: the PMU does not exist yet");
+        return;
+    }
+    ipod_classic_pmu_set_hold(nms->pmu, value);
+}
+
 static void ipod_classic_get_speed(Object *obj, Visitor *v, const char *name,
                                    void *opaque, Error **errp)
 {
@@ -484,6 +506,13 @@ static void ipod_classic_instance_init(Object *obj)
         "External power the PMU reports: battery, usb or adapter. Settable "
         "while running (qom-set /machine power usb); the start-up value "
         "comes from PMUCHARGER.");
+
+    object_property_add_bool(obj, "hold", ipod_classic_get_hold,
+                             ipod_classic_set_hold);
+    object_property_set_description(obj, "hold",
+        "Hold switch position: true is locked. Starts unlocked; settable "
+        "while running (qom-set /machine hold true), which raises the PMU's "
+        "hold interrupt.");
 
     object_property_add(obj, "speed", "uint32", ipod_classic_get_speed,
                         ipod_classic_set_speed, NULL, NULL);
@@ -690,6 +719,7 @@ static void ipod_classic_machine_init(MachineState *machine)
     AddressSpace *nsas;
     ARMCPU *cpu;
     DeviceState *dev;
+    DeviceState *gpio;
 
     if (nms->semihosting) {
         qemu_semihosting_enable();
@@ -886,6 +916,7 @@ static void ipod_classic_machine_init(MachineState *machine)
     qdev_prop_set_bit(dev, "media-present", drive_get(IF_IDE, 0, 0) != NULL);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, GPIO_MEM_BASE);
+    gpio = dev;
 
     /*
      * The external interrupt controller and system-alive block at 0x39A00000.
@@ -940,6 +971,13 @@ static void ipod_classic_machine_init(MachineState *machine)
     qdev_connect_gpio_out_named(dev, "wake", 0,
                                 ipod_classic_eic_pin(nms->eic,
                                                      S5L8702_EIC_GPIO_WAKE));
+
+    /*
+     * Pins E2/E4 carry the wheel; the firmware parks them while the hold
+     * switch is locked and in standby. See ipod_classic_gpio.h.
+     */
+    qdev_connect_gpio_out_named(gpio, "wheel-lines", 0,
+                                qdev_get_gpio_in_named(dev, "lines", 0));
 
     /* The PMU's INT output, GPIO 0x7b; see ipod_classic_pmu.c. */
     qdev_connect_gpio_out_named(DEVICE(nms->pmu), "irq", 0,

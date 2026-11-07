@@ -78,12 +78,16 @@ TOOLS = [
          ['base', 'out']),
     tool('vm_list', 'List VMs under /tmp/ipodvm with their window titles (owner session).'),
     tool('vm_status', 'Run state, PC/LR, whether the firmware is in standby (asleep), '
-         'power, persist and speed settings.', {'name': NAME}),
+         'power, persist, speed and hold settings.', {'name': NAME}),
     tool('vm_power', 'Plug in or unplug external power on a running VM, as a PMU plug '
          'event: the firmware reacts at once and plugging in wakes it from standby. adapter '
          'idles on the Charging screen; usb or battery leave it and allow standby.',
          {'name': NAME, 'power': {'type': 'string', 'enum': ['adapter', 'usb', 'battery']}},
          ['power']),
+    tool('vm_hold', 'Move the Hold switch on a running VM, as a PMU hold event: the '
+         'firmware re-reads the switch at once. true locks (wheel and button input is '
+         'dropped), false unlocks. VMs start unlocked.',
+         {'name': NAME, 'hold': {'type': 'boolean'}}, ['hold']),
     tool('vm_speed', 'Fast-forward guest time on a running VM: the timer block (kernel '
          'tick, microsecond counter) runs `factor` times faster, so timeouts such as the '
          'two-minute standby pass sooner. Device timers (wheel, LCD, audio, ATA) and the '
@@ -212,6 +216,8 @@ def call(name, a):
         return core.status(vm)
     if name == 'vm_power':
         return core.set_power(vm, a['power'])
+    if name == 'vm_hold':
+        return core.set_hold(vm, a['hold'])
     if name == 'vm_speed':
         return core.set_speed(vm, a['factor'])
     if name == 'vm_quit':

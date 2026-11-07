@@ -480,6 +480,10 @@ static void wheel_mouse_event(void *opaque, int dx, int dy, int dz,
         { MOUSE_EVENT_RBUTTON, S5L8702_WHEEL_BTN_MENU },
     };
 
+    if (!s->lines) {
+        return;
+    }
+
     if (dz) {
         wheel_turn(s, dz * (int32_t)s->key_step);
     }
@@ -511,6 +515,20 @@ static void wheel_key_event(void *opaque, int keycode)
     ipod_classic_np_overlay_key(keycode);
 
     qemu_set_irq(s->wake, released);
+
+    /*
+     * With E2/E4 parked the wheel controller is cut off from the SoC, so the
+     * key is lost; the wake line above still reaches the EIC, which is how a
+     * key wakes the SoC from standby.
+     */
+    if (!s->lines) {
+        if (wheel_trace_on() && wheeltrace >= 2) {
+            fprintf(stderr, "WHEELTRACE %" PRId64 " ms: key 0x%02x dropped, "
+                    "wheel lines parked\n",
+                    qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL), keycode);
+        }
+        return;
+    }
 
     switch (keycode & 0x7f) {
     case KEY_ENTER: bit = S5L8702_WHEEL_BTN_SELECT; break;
@@ -677,6 +695,26 @@ static void ipod_classic_wheel_reset(DeviceState *dev)
     qemu_set_irq(s->irq, 0);
 }
 
+/*
+ * The wheel lines changing state. Parking them stops the wheel controller
+ * (Rockbox's hold path writes WHEEL00 = 0 next to it), so whatever was owed to
+ * the guest is dropped with it, and the wheel comes back untouched with no
+ * button down.
+ */
+static void wheel_set_lines(void *opaque, int n, int level)
+{
+    IPodClassicWheelState *s = opaque;
+
+    s->lines = level;
+    if (!level) {
+        s->evq_head = 0;
+        s->evq_len = 0;
+        s->buttons = 0;
+        s->touched = false;
+        s->armed = false;
+    }
+}
+
 /* An integer from the environment, clamped. Tuning knobs, not hardware. */
 static int wheel_env_int(const char *name, int def, int lo, int hi)
 {
@@ -705,6 +743,9 @@ static void ipod_classic_wheel_realize(DeviceState *dev, Error **errp)
     sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->iomem);
     sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->irq);
     qdev_init_gpio_out_named(dev, &s->wake, "wake", 1);
+    qdev_init_gpio_in_named(dev, wheel_set_lines, "lines", 1);
+    /* Connected until a GPIO block says otherwise. */
+    s->lines = true;
 
     /*
      * The firmware delivers the FIRST movement of a gesture only if it is
@@ -759,12 +800,10 @@ static int wheel_post_load(void *opaque, int version_id)
 static const VMStateDescription vmstate_ipod_classic_wheel = {
     .name = TYPE_IPOD_CLASSIC_WHEEL,
     /*
-     * Bumped to 3 when the ordered event queue replaced pending_steps and the
-     * button repeat window. Nothing migrates this machine today, so the old
-     * format is not kept alive.
+     * Nothing migrates this machine today, so old formats are not kept alive.
      */
-    .version_id = 3,
-    .minimum_version_id = 3,
+    .version_id = 4,
+    .minimum_version_id = 4,
     .post_load = wheel_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(con, IPodClassicWheelState),
@@ -789,6 +828,7 @@ static const VMStateDescription vmstate_ipod_classic_wheel = {
         VMSTATE_INT64(btn_hold_until, IPodClassicWheelState),
         VMSTATE_INT64(ack_deadline, IPodClassicWheelState),
         VMSTATE_UINT32(last_packet, IPodClassicWheelState),
+        VMSTATE_BOOL(lines, IPodClassicWheelState),
         VMSTATE_TIMER_PTR(tick, IPodClassicWheelState),
         VMSTATE_END_OF_LIST()
     },

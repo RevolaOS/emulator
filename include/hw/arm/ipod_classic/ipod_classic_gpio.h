@@ -63,10 +63,21 @@
  *                 every attempt). Leaving it 0 is what the machine has always
  *                 done.
  *
- * GPIOCMD, +0x200, is written about 850 times in a diskless boot and is NOT
- * modelled: the writes are logged and dropped, exactly as they were when this
- * window was an unimplemented device. What it does is UNDETERMINED; Rockbox
- * names the register (s5l87xx.h:1426) and nothing more.
+ * GPIOCMD, +0x200, configures one pin: (group << 16) | (pin << 8) | function,
+ * the function being the same four-bit code PCON holds (0xe/0xf drive the pin
+ * low/high as an output). Rockbox writes it in that form (gpio-s5l8702.c,
+ * "GPIOCMD = 0xe0700" makes pin E7 an input; power-6g.c, "0xb070e | level"),
+ * and Apple's 0x08361fe4 composes the same word. The model folds it into
+ * PCON; output levels are still not modelled.
+ *
+ * THE CLICK WHEEL LINES, pins E2 and E4 (group 14, pins 2 and 4). Rockbox's
+ * s5l_clickwheel_init() puts E2..E5 in function 2 ("PCON14 = ... 0x00222200")
+ * and, when the hold switch locks, parks E2 and E4 as outputs and stops the
+ * wheel controller ("PCON14 = ... 0x000e0e00", button-clickwheel.c). Apple's
+ * hold handler 0x080559dc does the same through GPIOCMD (0x000e040e and
+ * 0x000e020e to lock, 0x000e0202 and 0x000e0402 to unlock), and its standby
+ * path parks the same two pins. The "wheel-lines" output is high while both
+ * are in function 2; the click wheel model takes no input while it is low.
  */
 
 #ifndef HW_ARM_IPOD_CLASSIC_GPIO_H
@@ -88,6 +99,11 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicGPIOState, IPOD_CLASSIC_GPIO)
 #define S5L8702_GPIO_PUNA       0x08
 #define S5L8702_GPIO_PUNB       0x0C
 #define S5L8702_GPIO_PUNC       0x10
+#define S5L8702_GPIO_CMD        0x200
+
+#define S5L8702_GPIO_FUNC_WHEEL 2
+#define S5L8702_GPIO_WHEEL_A    (14 * 8 + 2)    /* E2 */
+#define S5L8702_GPIO_WHEEL_B    (14 * 8 + 4)    /* E4 */
 
 /* The one pin this device exists for. See the note above. */
 #define S5L8702_GPIO_PIN_MEDIA  86
@@ -106,6 +122,9 @@ struct IPodClassicGPIOState {
 
     /* Property: drives pin 86. Set by the machine from drive_get(IF_IDE). */
     bool media_present;
+
+    /* High while E2 and E4 are click wheel lines; see the note above. */
+    qemu_irq wheel_lines;
 };
 
 #endif /* HW_ARM_IPOD_CLASSIC_GPIO_H */
