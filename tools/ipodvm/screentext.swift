@@ -31,8 +31,11 @@ let scaled = context.makeImage()!
 let request = VNRecognizeTextRequest()
 request.recognitionLevel = .accurate
 request.usesLanguageCorrection = false
-// Menus include language names in their own scripts (Language screen).
-request.automaticallyDetectsLanguage = true
+// English only. Automatic language detection would read the Language screen's
+// native-script names, but it makes every launch wait on Neural Engine model
+// compilation (over a minute per image, ANECompilerService at full load);
+// English-only recognition takes a fraction of a second.
+request.recognitionLanguages = ["en-US"]
 try VNImageRequestHandler(cgImage: scaled).perform([request])
 
 var boxes: [[String: Any]] = []

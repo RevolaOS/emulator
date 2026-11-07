@@ -110,9 +110,12 @@ or x = 158 (inside the bar on half- and full-width lists, which covers rows
 where a scrolling label crosses x = 1) differs strongly from the list
 background, trimmed to its first and last row marked at x = 1 (a scrollbar
 thumb next to the bar also marks x = 158). The bar's width, followed pixel by
-pixel along its top and bottom rows, separates half-width lists with a preview pane from full-width lists. Vision can misread individual glyphs (the Greek
-"Ελληνικά" reads as Latin letters) and a selected label that is too long
-scrolls and reads garbled.
+pixel along its top and bottom rows, separates half-width lists with a preview pane from full-width lists. Vision recognises English only:
+automatic language detection makes each read wait on Neural Engine model
+compilation for over a minute. Language names in other scripts on the
+Language screen read as approximate Latin letters or not at all, but
+`English` reads correctly. Vision can misread individual glyphs, and a
+selected label that is too long scrolls and reads garbled.
 
 ## Navigating
 
