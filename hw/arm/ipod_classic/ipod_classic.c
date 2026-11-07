@@ -88,7 +88,23 @@ static void ipod_classic_write_bootinfo(IPodClassicMachineState *nms)
     uint8_t zero[0x100] = { 0 };
 
     cpu_physical_memory_write(S5L8702_BOOTINFO_BASE, zero, sizeof(zero));
-    cpu_physical_memory_write(S5L8702_SYSINFO_BASE, sysinfo, sizeof(sysinfo));
+    if (nms->sysinfo_path[0] != '\0') {
+        /* A block taken from a real device replaces the synthesised one. */
+        uint8_t *data = NULL;
+        gsize size;
+
+        if (!g_file_get_contents(nms->sysinfo_path, (char **)&data, &size,
+                                 NULL) || size != S5L8702_SYSINFO_SIZE) {
+            error_report("sysinfo \"%s\" must be readable and exactly 0x%x "
+                         "bytes", nms->sysinfo_path, S5L8702_SYSINFO_SIZE);
+            exit(1);
+        }
+        cpu_physical_memory_write(S5L8702_SYSINFO_BASE, data, size);
+        g_free(data);
+    } else {
+        cpu_physical_memory_write(S5L8702_SYSINFO_BASE, sysinfo,
+                                  sizeof(sysinfo));
+    }
     cpu_physical_memory_write(S5L8702_BOOTINFO_TAG, &tag, sizeof(tag));
     cpu_physical_memory_write(S5L8702_BOOTINFO_PTR, &ptr, sizeof(ptr));
 }
@@ -336,6 +352,24 @@ static void ipod_classic_set_bootrom_path(Object *obj, const char *value,
     g_strlcpy(nms->bootrom_path, value, sizeof(nms->bootrom_path));
 }
 
+static char *ipod_classic_get_sysinfo_path(Object *obj, Error **errp)
+{
+    IPodClassicMachineState *nms = IPOD_CLASSIC_MACHINE(obj);
+    return g_strdup(nms->sysinfo_path);
+}
+
+static void ipod_classic_set_sysinfo_path(Object *obj, const char *value,
+                                          Error **errp)
+{
+    IPodClassicMachineState *nms = IPOD_CLASSIC_MACHINE(obj);
+
+    if (!g_file_test(value, G_FILE_TEST_EXISTS)) {
+        error_report("sysinfo at path \"%s\" must exist", value);
+        exit(1);
+    }
+    g_strlcpy(nms->sysinfo_path, value, sizeof(nms->sysinfo_path));
+}
+
 static bool ipod_classic_get_semihosting(Object *obj, Error **errp)
 {
     return IPOD_CLASSIC_MACHINE(obj)->semihosting;
@@ -352,6 +386,12 @@ static void ipod_classic_instance_init(Object *obj)
                             ipod_classic_set_bootrom_path);
     object_property_set_description(obj, "bootrom",
                                     "Path to the S5L8702 bootrom binary");
+    object_property_add_str(obj, "sysinfo", ipod_classic_get_sysinfo_path,
+                            ipod_classic_set_sysinfo_path);
+    object_property_set_description(obj, "sysinfo",
+        "Path to a 0x120-byte SysInfo block from a real device, handed to "
+        "the OS instead of the synthesised 6G one. Firmware 2.0.x needs a "
+        "hardware id of 0x00130300 or later");
 
     /*
      * Apple's retailOS is built against ARM's own C library with the
@@ -865,6 +905,12 @@ static void ipod_classic_machine_init(MachineState *machine)
     create_unimplemented_device("s5l8702.sha1", SHA1_MEM_BASE, 0x100000);
     if (!getenv("SHA1_OFF")) {
         dev = qdev_new("ipodtouch.sha1");
+        /*
+         * Apple's S5L8702 driver uses the block as a bare compression
+         * function and does its own padding, state saving and restoring; see
+         * the note in ipod_touch_sha1.c.
+         */
+        qdev_prop_set_bit(dev, "block-engine", true);
         sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
         memory_region_add_subregion_overlap(sysmem, SHA1_MEM_BASE,
                                             &IPOD_TOUCH_SHA1(dev)->iomem, 1);

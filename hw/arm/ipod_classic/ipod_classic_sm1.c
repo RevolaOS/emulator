@@ -83,6 +83,8 @@
  */
 static bool sm1_decode_on(void);
 
+static bool sm1_sync_on(void);
+
 static bool sm1_pos_reg(IPodClassicSM1State *s, hwaddr offset, uint32_t *out)
 {
     for (int idx = 0; idx < S5L8702_SM1_POS_CHANS; idx++) {
@@ -90,6 +92,40 @@ static bool sm1_pos_reg(IPodClassicSM1State *s, hwaddr offset, uint32_t *out)
         hwaddr a44 = S5L8702_SM1_POS_A44 + idx * S5L8702_SM1_POS_STRIDE;
         if (offset != a48 && offset != a44) {
             continue;
+        }
+        /*
+         * NOT A POSITION: A WINDOW (SM1_SYNC answers it as one).
+         *
+         * Everything below treats this pair as the engine's playback
+         * position, which is what it looked like from 1.1.2: "dest =
+         * 0x22020000 + position". Read in the 2.0.5 image it is the window
+         * through which the CPU reaches the engine's own memory:
+         *
+         *  - 0x080ab6d0 returns { [channel +4] + [+0xa48], [+0xa44] }.
+         *  - 0x080cd0f0 uses that as a start and a LENGTH: "is this address
+         *    inside [start, start + length)?", three tries, and it decides
+         *    whether a chain is handed over as an offset (|2) or an address
+         *    (|1). With a length of 0 it is always an address, which is what
+         *    the hand-over hook in this file decodes.
+         *  - 0x0802e5ec is the only other caller and it is an UPLOAD: it
+         *    copies data to "[descriptor +0xc] + start", narrowing words to
+         *    halfwords, in 8 or 16 KiB pages that 0x0802e710 splits at the
+         *    boundaries. Six calls at boot, 64 KiB of it in four 16 KiB
+         *    chunks; more at a track change.
+         *
+         * [channel +4] is IRAM1's base, so that memory is IRAM1 and a correct
+         * start is simply 0. Answered with a running position, every upload
+         * after boot -- when the I2S has started and the "position" is no
+         * longer 0 -- landed up to 32 KiB away from where it belonged, on
+         * whatever lives there, and sometimes off the end. MEASURED on 2.0.5:
+         * a data abort at 0x0802e6b0 (the narrowing store) with DFAR =
+         * 0x22041a16, at the first next-track press, caught by RepriseOS's
+         * panic handler. That is the fault IRAMSPILL was mapping RAM under,
+         * and the halfword copy of wiki/19 s11.26.
+         */
+        if (sm1_sync_on()) {
+            *out = 0;
+            return true;
         }
         /* Position in stereo frames. When the data-path HLE owns playback, use
          * ITS cursor so pause (frozen), seek (jumped) and track-change (reset)
@@ -417,6 +453,184 @@ static void sm1_fill_slot(unsigned i)
     cursor += n;
 }
 
+/*
+ * A DECODER, NOT A METRONOME (SM1_SYNC=1).
+ *
+ * Everything above hands the guest a "decoded" slot whenever the I2S has
+ * clocked out another 1024 frames, on a 25 ms timer. MEASURED on firmware
+ * 2.0.5 with the pctrace plugin (period=1000), that is not what the firmware is
+ * built around, and it is slower than the music:
+ *
+ *     handover=32 sm1irq=32 slotok=32 qwrite=32   qread=41 qunder=9   (per s)
+ *
+ * The guest drives the engine one compressed frame at a time. Its render pump
+ * (IRAM 0x220061a0) asks the stream parser for a frame and its timestamp,
+ * submits it (0x0809a898 -> chain address to sub-block 4 +0x00), waits for the
+ * engine interrupt, takes the decoded slot (0x080bdda8) and commits it with
+ * that timestamp to the PCM buffer manager, which feeds the output queue at
+ * IRAM 0x22010398. What paces all of this is the QUEUE: the feeder
+ * (0x0815d064) sleeps while it is full. So a real engine finishes a frame in a
+ * few milliseconds, the queue fills, and the pump then idles at the frame rate.
+ *
+ * Clocked instead, the pump gets 32 slots a second against the 41 the output
+ * takes, the queue is permanently empty, and three symptoms follow from that
+ * one fact:
+ *
+ *  - Elapsed time stays at 0:00. The position the player shows is the stamp
+ *    of the queue block being played (0x2200724c), and the writer (0x22006f60)
+ *    deliberately leaves the reader's own block unstamped. With the queue
+ *    empty every write IS in the reader's block, so no stamp is ever written.
+ *    The stream's own position (0x220106dc +0x0c) was advancing all along.
+ *  - Completions keep arriving through a pause, because the I2S clocks
+ *    silence: 232 "frame done" in six seconds for frames nobody submitted.
+ *  - A track takes 1.2x its length to get through, 1024 frames a slot for a
+ *    1152-frame MPEG frame.
+ *
+ * So in this mode a completion is owed for each frame handed over and nothing
+ * else, it is delivered as soon as the guest has taken the previous one, and
+ * the slot carries exactly that frame's worth of audio.
+ *
+ * ONE SLOT, deliberately. The guest indexes the ring with its own counter
+ * (table +0x14), which we cannot see without a firmware-specific address, and
+ * a ring of one cannot be out of step with it.
+ *
+ * Behind a switch because 1.1.2 was measured handing over a single frame per
+ * play (wiki/19 s11.112, "framepull = 1"), where this would deliver a single
+ * completion and stop.
+ */
+static unsigned sm1_sync_owed;              /* handed over, not yet decoded */
+static unsigned sm1_sync_frames = 1152;     /* sample frames in that frame  */
+static unsigned sm1_sync_channels = 2;
+static uint8_t  sm1_sync_head[64];          /* its first bytes              */
+static int64_t  sm1_sync_since;             /* when it was handed over      */
+
+/*
+ * How long a completion may be held back while the host is still decoding the
+ * track. The pump waits 500 ms for the engine (0x080a4814) before it gives the
+ * frame up, so this has to stay well inside that; past it the frame goes out
+ * as silence rather than stall the guest.
+ */
+#define SM1_SYNC_DECODE_WAIT_NS  (300 * 1000 * 1000LL)
+
+static bool sm1_sync_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("SM1_SYNC");
+        on = (e && *e && *e != '0') ? 1 : 0;
+        if (on) {
+            fprintf(stderr, "SM1_SYNC: one completion per frame handed over, "
+                    "paced by the guest's own output queue\n");
+            if (sm1_decode_on()) {
+                /*
+                 * With SM1_DECODE the slot carries the frame's real audio, so
+                 * the guest's own pipeline plays it and the host must not
+                 * also write PCM into the DMA buffer underneath it.
+                 */
+                ipod_classic_hle_audio_set_native(true);
+                ipod_classic_hle_audio_set_np_feed(true);
+                fprintf(stderr, "SM1_SYNC: each slot carries its frame's "
+                        "decoded audio; the host DMA feed is off\n");
+            }
+        }
+    }
+    return on == 1;
+}
+
+/* The guest handed a frame over: note how much audio it carries. */
+static void sm1_sync_submit(const uint8_t *head)
+{
+    /*
+     * MPEG audio header: eleven sync bits, then two version bits (3 = MPEG-1).
+     * A Layer III frame is 1152 samples in MPEG-1 and 576 in MPEG-2/2.5.
+     */
+    if (head[0] == 0xff && (head[1] & 0xe0) == 0xe0) {
+        sm1_sync_frames = ((head[1] >> 3) & 3) == 3 ? 1152 : 576;
+        sm1_sync_channels = ((head[3] >> 6) & 3) == 3 ? 1 : 2;
+    }
+    memcpy(sm1_sync_head, head, sizeof(sm1_sync_head));
+    sm1_sync_since = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    /*
+     * The pump submits a frame only after it has taken the previous one's
+     * output, or given up on it. So a slot still marked ready at this point is
+     * one the guest abandoned -- it tears the engine down mid-stream when it
+     * starts a track (three frames in, then a fresh bring-up) -- and a decode
+     * still owed is one it no longer wants. MEASURED before this was here: the
+     * first 27 frames played, the bring-up left a ready slot behind, and the
+     * engine then waited for ever for the guest to take it.
+     */
+    {
+        uint16_t h = 0;
+        cpu_physical_memory_write(SM1_SLOT_ARRAY + 10, &h, 2);
+    }
+    sm1_sync_owed = 1;
+}
+
+/* Deliver one owed frame if the guest has taken the last. True if it did. */
+static bool sm1_sync_complete(void)
+{
+    uint8_t pcm[2048 * 4];              /* room for an SBR frame */
+    unsigned samples = sm1_sync_frames * sm1_sync_channels;
+    uint16_t h;
+
+    if (!sm1_sync_owed) {
+        return false;                   /* nothing submitted: nothing done */
+    }
+    cpu_physical_memory_read(SM1_SLOT_ARRAY + 10, &h, 2);
+    if (h != 0) {
+        return false;                   /* the last slot is still the guest's */
+    }
+
+    /*
+     * The frame's audio. Decoding MP3 the way the undocumented on-chip codec
+     * does is not something to reverse-engineer bit for bit; the host decodes
+     * the same file and this picks out the same frame. Without SM1_DECODE the
+     * slot is silence and the host feed supplies the sound instead.
+     */
+    memset(pcm, 0, sizeof(pcm));
+    if (sm1_decode_on()) {
+        /*
+         * The host knows the file, so it knows the frame's size better than
+         * the header guess in sm1_sync_submit(): an AAC frame is 1024 samples
+         * and does not start with anything recognisable.
+         */
+        unsigned known = samples;
+        int n = ipod_classic_hle_audio_frame_pcm(sm1_sync_head,
+                                                 sizeof(sm1_sync_head),
+                                                 pcm, sizeof(pcm), &known);
+        if (n == 0 && qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - sm1_sync_since
+                      < SM1_SYNC_DECODE_WAIT_NS) {
+            return false;               /* track still decoding: a moment more */
+        }
+        if (n >= 0 && known * 2 <= sizeof(pcm)) {
+            samples = known;
+        }
+        if (n <= 0) {
+            memset(pcm, 0, sizeof(pcm));
+        }
+    }
+
+    /* Descriptor and geometry, as sm1_publish_slots() -- one slot of it. */
+    h = cpu_to_le16(0x0003);
+    cpu_physical_memory_write(SM1_SLOT_DESC + 0, &h, 2);
+    h = cpu_to_le16(0);
+    cpu_physical_memory_write(SM1_SLOT_DESC + 2, &h, 2);
+    h = cpu_to_le16(samples);
+    cpu_physical_memory_write(SM1_SLOT_DESC + 4, &h, 2);
+    h = cpu_to_le16(1);
+    cpu_physical_memory_write(SM1_SLOT_ARRAY + 2, &h, 2);
+
+    cpu_physical_memory_write(SM1_SLOT_PCM, pcm, samples * 2);
+
+    h = cpu_to_le16(samples);
+    cpu_physical_memory_write(SM1_SLOT_ARRAY + 12, &h, 2);
+    h = cpu_to_le16(1);
+    cpu_physical_memory_write(SM1_SLOT_ARRAY + 10, &h, 2);
+
+    sm1_sync_owed--;
+    return true;
+}
+
 static int sm1_publish_slots(IPodClassicSM1State *s)
 {
     uint16_t h;
@@ -462,7 +676,19 @@ static int sm1_publish_slots(IPodClassicSM1State *s)
     {
         static uint64_t freed;      /* one SM1 in the machine */
         static uint64_t base_pos;
-        uint64_t pos = sm1_stream_pos(s);
+        /*
+         * Always the I2S count, never sm1_stream_pos(): without SM1_DECODE that
+         * switches to the host shim's cursor the moment a song is decoded, the
+         * new value is far BELOW base_pos, and (pos - base_pos) wraps -- the
+         * loop below then "frees" 2^64 slots and never returns. MEASURED on
+         * 2.0.5: the main loop spun here for good.
+         */
+        uint64_t pos = s->i2s ? s->i2s->tx_samples / 2 : 0;
+
+        if (pos < base_pos) {
+            base_pos = pos;             /* the I2S was reset under us */
+            freed = 0;
+        }
 
         if (freed == 0) {
             /* Nothing played yet: the whole ring is the firmware's to fill. */
@@ -561,7 +787,8 @@ static void sm1_irq_tick(void *opaque)
             every = 1;
         }
     }
-    if (!s->irq_pending && (s->irq_armed || s->irq_always) && (s->ticks % every == 0)) {
+    if (!s->irq_pending && (s->irq_armed || s->irq_always)
+        && (sm1_sync_on() || s->ticks % every == 0)) {
         /*
          * Publish the memory-side state BEFORE signalling: the frame report is
          * what makes the firmware come and read it, so it has to already be
@@ -575,7 +802,8 @@ static void sm1_irq_tick(void *opaque)
          * only when a frame really completed. Returns -1 when not modelling,
          * which keeps the default build's cadence byte-for-byte.
          */
-        int freed = sm1_publish_slots(s);
+        int freed = sm1_sync_on() ? sm1_sync_complete()
+                                  : sm1_publish_slots(s);
         if (freed == 0) {
             timer_mod(s->irq_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
                       (int64_t)SM1_IRQ_TICK_MS * 1000000);
@@ -608,8 +836,10 @@ static void sm1_irq_tick(void *opaque)
          * block, or broadening the read acknowledge would have ended the storm
          * instead of trimming it by a third.
          */
-        timer_mod(s->irq_off_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-                  (int64_t)S5L8702_SM1_IRQ_ASSERT_US * 1000);
+        if (!sm1_sync_on()) {
+            timer_mod(s->irq_off_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+                      (int64_t)S5L8702_SM1_IRQ_ASSERT_US * 1000);
+        }
         if (s->irqs <= 4 || s->irqs % 2000 == 0) {
             fprintf(stderr, "SM1_IRQ: line 18 raised #%" PRIu64
                     " (armed=%d powered=%d pos=%" PRIu64 ")\n",
@@ -722,7 +952,7 @@ static uint64_t ipod_classic_sm1_read(void *opaque, hwaddr offset,
      * so the handler that triggered on this interrupt still sees it set and
      * signals its event.
      */
-    if (was_pending) {
+    if (was_pending && !sm1_sync_on()) {
         s->irq_pending = false;
         qemu_irq_lower(s->irq);
     }
@@ -897,8 +1127,29 @@ static void ipod_classic_sm1_write(void *opaque, hwaddr offset,
      * the clock is INFERIDO.
      */
     switch (offset) {
-    case S5L8702_SM1_CODEC_EN:   /* +0x824 codec enable   */
     case S5L8702_SM1_COMMIT:     /* +0xc48 config commit  */
+        /*
+         * ...which is the interrupt CLEAR register, and that was the missing
+         * acknowledge. The line-18 handler (0x0802eb20 on 2.0.5) reads the
+         * status at +0xa98, tests bit 2, restarts the engine and signals the
+         * pump -- and its last act is 0x080bac4c, which writes that same bit
+         * here. Not knowing this, the model above could only hold the line for
+         * a guessed window and treat any read as an acknowledge.
+         *
+         * A window is harmless when completions come off a clock and a lost
+         * one is replaced 25 ms later. With one completion per frame it is
+         * fatal: MEASURED, the guest handed a frame over, the pulse came and
+         * went while it had the line masked, the handler never ran, and the
+         * pump's 500 ms wait expired and skipped the track. So in SM1_SYNC the
+         * line is a true level -- up until the guest clears it here.
+         */
+        if (sm1_sync_on() && (value & S5L8702_SM1_INTEN_FRAME)
+            && s->irq_pending) {
+            s->irq_pending = false;
+            qemu_irq_lower(s->irq);
+        }
+        /* fall through */
+    case S5L8702_SM1_CODEC_EN:   /* +0x824 codec enable   */
         s->powered = true;
         break;
     case S5L8702_SM1_RUN:        /* +0x400 start (nonzero) */
@@ -933,6 +1184,30 @@ static void ipod_classic_sm1_write(void *opaque, hwaddr offset,
             }
         } else {
             s->irq_armed = false;
+        }
+        break;
+    case S5L8702_SM1_STREAM_CHAIN:
+        /*
+         * Sub-block 4 +0x00: the firmware hands the engine a descriptor chain
+         * whose buffer carries the compressed stream (wiki/19 s11.112):
+         *
+         *     value  = chain address | bit 0 (go)
+         *     chain  : +0 next, +4 flags/length, +8 buffer (uncached alias)
+         *
+         * Those bytes are the one exact statement of WHICH file the guest is
+         * playing and WHERE in it, so pass them to the host decoder instead of
+         * leaving it to guess from disk reads.
+         */
+        if (value & 1) {
+            uint32_t chain[3];
+            uint8_t head[64];
+
+            cpu_physical_memory_read(value & ~3u, chain, sizeof(chain));
+            cpu_physical_memory_read(le32_to_cpu(chain[2]), head, sizeof(head));
+            ipod_classic_hle_audio_note_stream(head, sizeof(head));
+            if (sm1_sync_on()) {
+                sm1_sync_submit(head);
+            }
         }
         break;
     default:

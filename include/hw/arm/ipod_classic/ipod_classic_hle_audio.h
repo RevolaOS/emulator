@@ -79,6 +79,27 @@ bool ipod_classic_hle_audio_enabled(void);
 void ipod_classic_hle_audio_note_disk_read(uint64_t byte_off, uint32_t len);
 
 /*
+ * The guest handed its audio engine `len` bytes of compressed stream: identify
+ * the file and the position from them. A no-op unless the shim is enabled.
+ */
+void ipod_classic_hle_audio_note_stream(const uint8_t *head, size_t len);
+
+/*
+ * Decode for the engine: native format, frame-aligned. Call before any track
+ * is decoded.
+ */
+void ipod_classic_hle_audio_set_native(bool on);
+
+/*
+ * The decoded PCM of the frame whose first bytes are `head`. Bytes written;
+ * 0 if that track is still being decoded; -1 if it is not a known frame.
+ * *samples is the frame's size in 16-bit samples unless the answer is -1.
+ */
+int ipod_classic_hle_audio_frame_pcm(const uint8_t *head, size_t len,
+                                     uint8_t *dst, size_t max,
+                                     unsigned *samples);
+
+/*
  * True when the shim is enabled and actively feeding decoded PCM (a song has
  * been identified and decoded). The clock model uses this to suppress the
  * retailOS's deadlock-watchdog reboot while the HLE is playing the song --
