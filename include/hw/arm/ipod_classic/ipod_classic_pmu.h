@@ -87,6 +87,23 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicPMUState, IPOD_CLASSIC_PMU)
 #define PCF5063X_MBCS1_ADAPTOK    0x08
 #define PCF5063X_MBCS1_HEALTHY    0x00   /* TBAT_OK, no charger, no WDT expiry */
 
+/* INT1 plug events, from Rockbox's pcf5063x.h. */
+#define PCF5063X_INT1_ADPINS      0x01
+#define PCF5063X_INT1_ADPREM      0x02
+#define PCF5063X_INT1_USBINS      0x04
+#define PCF5063X_INT1_USBREM      0x08
+
+/*
+ * External power the model reports in MBCS1. Starts from PMUCHARGER (unset:
+ * battery; "adapter": adapter; anything else: USB) and can change at run time
+ * through the machine's "power" property.
+ */
+typedef enum IPodClassicPMUPower {
+    IPOD_CLASSIC_PMU_POWER_BATTERY,
+    IPOD_CLASSIC_PMU_POWER_USB,
+    IPOD_CLASSIC_PMU_POWER_ADAPTER,
+} IPodClassicPMUPower;
+
 /*
  * GPIOSTAT bit 1, PCF50635_GPIOSTAT_GPIO2 in Rockbox's pmu-target.h:43. It is
  * the hold switch, inverted: pmu-6g.c:244 reads it as
@@ -120,6 +137,17 @@ struct IPodClassicPMUState {
      */
     uint8_t addr_saved;
     bool wrote_data;
+
+    IPodClassicPMUPower power;
+
+    /* The chip's INT output, active low; see pmu_update_irq. */
+    qemu_irq irq;
 };
+
+/*
+ * Plug or unplug external power: MBCS1 reports the new state from the next
+ * read on, and INT1 latches the matching insert/remove events.
+ */
+void ipod_classic_pmu_set_power(IPodClassicPMUState *s, IPodClassicPMUPower power);
 
 #endif

@@ -47,9 +47,9 @@ VALID_KEYS = set(KEY_NAMES) | set(KEY_NAMES.values())
 # PC after it). Any key wakes it.
 STANDBY_WFI = range(0x22002e6c, 0x22002e78)
 
-# --power: what the PMU reports as external power (PMUCHARGER). The firmware
-# only enters standby without the wall adapter; on the adapter it idles on
-# the Charging screen instead.
+# --power: what the PMU reports as external power (PMUCHARGER at start-up, the
+# machine's "power" property while running). The firmware only enters standby
+# without the wall adapter; on the adapter it idles on the Charging screen.
 POWER = {'adapter': 'adapter', 'usb': 'usb', 'battery': None}
 
 
@@ -598,6 +598,21 @@ def status(name):
             'title': record.get('title', ''), 'firmware': record['firmware'],
             'profile': record.get('profile'), 'power': record.get('power', 'adapter'),
             'persist': record.get('persist', False), 'run': str(run)}
+
+
+def set_power(name, power):
+    """Plug in or unplug external power on a running VM."""
+    if power not in POWER:
+        raise Failure(f'unknown power {power!r}; use {sorted(POWER)}')
+    run = run_dir(name)
+    with QMP(run) as qmp:
+        previous = qmp.execute('qom-get', {'path': '/machine', 'property': 'power'})
+        qmp.execute('qom-set', {'path': '/machine', 'property': 'power', 'value': power})
+        current = qmp.execute('qom-get', {'path': '/machine', 'property': 'power'})
+    record = json.loads((run / 'launch.json').read_text())
+    record['power'] = current
+    (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
+    return {'name': name, 'power': current, 'previous': previous}
 
 
 def list_vms():

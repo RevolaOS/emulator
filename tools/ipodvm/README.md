@@ -58,6 +58,10 @@ the guest running (`--pause` pauses it, `--no-wait` returns immediately).
 `--power` sets the external power the PMU reports: `adapter` (default),
 `usb` or `battery`. On the adapter the firmware idles on the Charging screen;
 on USB or battery it enters standby after about two minutes idle.
+`power adapter|usb|battery` plugs in or unplugs power on a running VM (QMP
+`qom-set /machine power`). The PMU raises its plug interrupt, so the firmware
+reacts at once: unplugging the adapter leaves the Charging screen, and
+plugging in wakes it from standby. `status` reports the current value.
 
 `launch` opens an SDL window showing the live screen; it also accepts keys
 typed into it. Paused guests show their last frame. The title (also shown by
@@ -107,6 +111,7 @@ change.
 | `run [N]`, `pause` | resume (for N seconds, then pause) or pause |
 | `shot [FILE]` | screenshot (default: next file in `shots/`) |
 | `status` | run state, standby, PC/LR, title, firmware, profiler, power |
+| `power adapter\|usb\|battery` | change the external power the PMU reports while running |
 | `hmp LINE…` | raw HMP command, e.g. `hmp info registers` |
 | `list`, `quit` | list VMs under `/tmp/ipodvm`; stop one |
 

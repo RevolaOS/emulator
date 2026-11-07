@@ -235,6 +235,9 @@ def main():
     named('pause', 'pause the guest').set_defaults(func=lambda a: core.pause(a.name))
     named('status', 'run state, PC/LR, standby (asleep), power').set_defaults(
         func=lambda a: core.status(a.name))
+    p = named('power', 'plug in or unplug external power on the running VM')
+    p.add_argument('power', choices=sorted(core.POWER))
+    p.set_defaults(func=lambda a: core.set_power(a.name, a.power))
     named('quit', 'stop the VM').set_defaults(func=lambda a: core.quit_vm(a.name))
     p = named('hmp', 'run a raw HMP command (e.g. "info registers")')
     p.add_argument('line', nargs='+')

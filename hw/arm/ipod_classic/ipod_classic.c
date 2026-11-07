@@ -380,6 +380,41 @@ static void ipod_classic_set_semihosting(Object *obj, bool value, Error **errp)
     IPOD_CLASSIC_MACHINE(obj)->semihosting = value;
 }
 
+static const char *const ipod_classic_power_names[] = {
+    [IPOD_CLASSIC_PMU_POWER_BATTERY] = "battery",
+    [IPOD_CLASSIC_PMU_POWER_USB] = "usb",
+    [IPOD_CLASSIC_PMU_POWER_ADAPTER] = "adapter",
+};
+
+static char *ipod_classic_get_power(Object *obj, Error **errp)
+{
+    IPodClassicMachineState *nms = IPOD_CLASSIC_MACHINE(obj);
+
+    if (!nms->pmu) {
+        error_setg(errp, "power: the PMU does not exist yet");
+        return NULL;
+    }
+    return g_strdup(ipod_classic_power_names[nms->pmu->power]);
+}
+
+static void ipod_classic_set_power(Object *obj, const char *value, Error **errp)
+{
+    IPodClassicMachineState *nms = IPOD_CLASSIC_MACHINE(obj);
+
+    if (!nms->pmu) {
+        error_setg(errp, "power: the PMU does not exist yet; use PMUCHARGER "
+                   "to choose the power at start-up");
+        return;
+    }
+    for (int i = 0; i < ARRAY_SIZE(ipod_classic_power_names); i++) {
+        if (!strcmp(value, ipod_classic_power_names[i])) {
+            ipod_classic_pmu_set_power(nms->pmu, i);
+            return;
+        }
+    }
+    error_setg(errp, "power must be battery, usb or adapter, not \"%s\"", value);
+}
+
 static void ipod_classic_instance_init(Object *obj)
 {
     object_property_add_str(obj, "bootrom", ipod_classic_get_bootrom_path,
@@ -411,6 +446,13 @@ static void ipod_classic_instance_init(Object *obj)
         "Answer ARM semihosting calls (SVC 0x123456). Apple's retailOS prints "
         "its diagnostics through them. Turn it off to see the firmware take "
         "the SVC vector instead.");
+
+    object_property_add_str(obj, "power", ipod_classic_get_power,
+                            ipod_classic_set_power);
+    object_property_set_description(obj, "power",
+        "External power the PMU reports: battery, usb or adapter. Settable "
+        "while running (qom-set /machine power usb); the start-up value "
+        "comes from PMUCHARGER.");
 }
 
 static inline qemu_irq s5l8702_get_irq(IPodClassicMachineState *s, int n)
@@ -677,8 +719,9 @@ static void ipod_classic_machine_init(MachineState *machine)
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, I2C0_MEM_BASE);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
                        s5l8702_get_irq(nms, S5L8702_I2C0_IRQ));
-    i2c_slave_create_simple(nms->i2c0->bus, TYPE_IPOD_CLASSIC_PMU,
-                            S5L8702_PMU_I2C_ADDR);
+    nms->pmu = IPOD_CLASSIC_PMU(i2c_slave_create_simple(nms->i2c0->bus,
+                                                        TYPE_IPOD_CLASSIC_PMU,
+                                                        S5L8702_PMU_I2C_ADDR));
 
     /*
      * The CS42L55 audio codec, also on I2C0, at 7-bit 0x4A. The retailOS talks
@@ -857,6 +900,11 @@ static void ipod_classic_machine_init(MachineState *machine)
     qdev_connect_gpio_out_named(dev, "wake", 0,
                                 ipod_classic_eic_pin(nms->eic,
                                                      S5L8702_EIC_GPIO_WAKE));
+
+    /* The PMU's INT output, GPIO 0x7b; see ipod_classic_pmu.c. */
+    qdev_connect_gpio_out_named(DEVICE(nms->pmu), "irq", 0,
+                                ipod_classic_eic_pin(nms->eic,
+                                                     S5L8702_EIC_GPIO_PMU));
 
     /*
      * The I2S transmitter at 0x3CA00000, the audio data path. It was

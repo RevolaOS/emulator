@@ -28,6 +28,9 @@
  *   - The interrupt status registers INT1..INT5 and INT6, which are
  *     read-to-clear on the real chip and therefore must not be a plain
  *     register file: a driver that reads them expects the bits to go away.
+ *   - External power presence in MBCS1 (battery, USB or adapter), changeable
+ *     while running; a change latches the INT1 insert/remove events.
+ *   - The INT output, on SoC GPIO 0x7b (see pmu_update_irq).
  *
  * WHAT IS NOT
  *
@@ -36,7 +39,6 @@
  *     Rockbox decided an alarm had gone off on every boot.
  *   - Charging, the ON/OFF controller and the regulators. Writing them changes
  *     nothing, because there is no voltage in here for a voltage to mean.
- *   - The chip's interrupt output. Nothing is wired to it yet.
  *
  * ASSUMED, and marked as such because nothing derives them:
  *
@@ -54,6 +56,7 @@
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "hw/i2c/i2c.h"
+#include "hw/irq.h"
 #include "migration/vmstate.h"
 #include "sysemu/rtc.h"
 #include "hw/arm/ipod_classic/ipod_classic_pmu.h"
@@ -81,6 +84,69 @@ static uint32_t pmu_battery_raw(void)
     return S5L8702_PMU_ADC_BATTERY_RAW;
 }
 
+/*
+ * PMUCHARGER picks the external power at start-up; the machine's "power"
+ * property changes it later (ipod_classic_pmu_set_power).
+ *
+ * An emulated iPod has no cell to discharge, so "sitting in a dock" is at least
+ * as honest a description of it as "running on a battery that never moves".
+ * Which of USB or adapter a real device would report depends on what it is
+ * plugged into, and we are plugged into nothing, so it is a model choice:
+ * unset means battery, "adapter" the wall adapter, anything else USB.
+ */
+static IPodClassicPMUPower pmu_initial_power(void)
+{
+    const char *e = getenv("PMUCHARGER");
+
+    if (!e || !*e) {
+        return IPOD_CLASSIC_PMU_POWER_BATTERY;
+    }
+    return strcmp(e, "adapter") ? IPOD_CLASSIC_PMU_POWER_USB
+                                : IPOD_CLASSIC_PMU_POWER_ADAPTER;
+}
+
+/*
+ * The INT output, active low: low while any INT1..INT5/INT6 bit is set that
+ * its INTnM mask does not mask. Rockbox's pmu-6g.c registers it as a level-low
+ * external interrupt on GPIO 0x7b (GPIO_EINT_PMU), reads INT1..INT6 to clear
+ * it, and its comment says that read "will also raise the PMU IRQ pin".
+ * Apple's firmware arms the same pin as a standby wake source.
+ *
+ * MEASURED with firmware 2.0.5: it leaves the INT1 plug events unmasked
+ * (INT1M 0xb0) and answers a power change by reading INT1..INT6 and then
+ * MBCS1, so plugging or unplugging takes effect at once -- leaving the
+ * Charging screen on unplug, and waking from standby on plug-in.
+ */
+static void pmu_update_irq(IPodClassicPMUState *s)
+{
+    bool pending = s->reg[PCF50635_REG_INT6] & ~s->reg[PCF50635_REG_INT6M];
+
+    for (int i = 0; i < 5; i++) {
+        pending |= s->reg[PCF5063X_REG_INT1 + i] & ~s->reg[PCF5063X_REG_INT1M + i];
+    }
+    qemu_set_irq(s->irq, !pending);
+}
+
+void ipod_classic_pmu_set_power(IPodClassicPMUState *s, IPodClassicPMUPower power)
+{
+    static const uint8_t inserted[] = {
+        [IPOD_CLASSIC_PMU_POWER_USB] = PCF5063X_INT1_USBINS,
+        [IPOD_CLASSIC_PMU_POWER_ADAPTER] = PCF5063X_INT1_ADPINS,
+    };
+    static const uint8_t removed[] = {
+        [IPOD_CLASSIC_PMU_POWER_USB] = PCF5063X_INT1_USBREM,
+        [IPOD_CLASSIC_PMU_POWER_ADAPTER] = PCF5063X_INT1_ADPREM,
+    };
+
+    if (power == s->power) {
+        return;
+    }
+    /* The events latch in INT1 until the firmware reads it (read to clear). */
+    s->reg[PCF5063X_REG_INT1] |= removed[s->power] | inserted[power];
+    s->power = power;
+    pmu_update_irq(s);
+}
+
 static void pmu_start_adc(IPodClassicPMUState *s)
 {
     uint32_t raw = pmu_battery_raw();
@@ -101,8 +167,9 @@ static uint8_t pmu_reg_read(IPodClassicPMUState *s, uint8_t addr)
     case PCF5063X_REG_INT4:
     case PCF5063X_REG_INT5:
     case PCF50635_REG_INT6:
-        /* Read to clear, which is what makes an interrupt line drop. */
+        /* Read to clear, which is what releases the INT line. */
         s->reg[addr] = 0;
+        pmu_update_irq(s);
         break;
     case PCF50635_REG_GPIOSTAT:
         /*
@@ -133,7 +200,7 @@ static uint8_t pmu_reg_read(IPodClassicPMUState *s, uint8_t addr)
          */
         val = PCF5063X_MBCS1_HEALTHY;
         /*
-         * PMUCHARGER=1: report external power present and OK.
+         * External power, from s->power (see pmu_initial_power).
          *
          * MEASURED: with the default "on battery, no charger" report the
          * retailOS eventually puts up "Low Battery -- Connect to Power" and
@@ -141,31 +208,15 @@ static uint8_t pmu_reg_read(IPodClassicPMUState *s, uint8_t addr)
          * prevent it (see the note above pmu_battery_raw). That is coherent --
          * it is asking to be plugged in, and nothing here ever says it is.
          *
-         * An emulated iPod has no cell to discharge, so "sitting in a dock"
-         * is at least as honest a description of it as "running on a battery
-         * that never moves", and it is the one the firmware can act on. Kept
-         * behind a variable because it IS a model choice, not a measurement:
-         * which of USB or adapter a real device would report depends on what
-         * it is plugged into, and we are plugged into nothing.
+         * WHICH KIND of external power matters, and getting it wrong was
+         * MEASURED: reporting the wall ADAPTER puts the device into its
+         * full-screen "Charging" mode and it stops playing -- which is what a
+         * real iPod does on a charger. USB power leaves it usable.
          */
-        {
-            const char *e = getenv("PMUCHARGER");
-            if (e && *e) {
-                /*
-                 * WHICH KIND of external power matters, and getting it wrong
-                 * was MEASURED: reporting the wall ADAPTER puts the device
-                 * into its full-screen "Charging" mode and it stops playing --
-                 * which is what a real iPod does on a charger, so the model was
-                 * right and the choice was wrong. USB power is the one that
-                 * leaves it usable. Default is USB; PMUCHARGER=adapter keeps
-                 * the other one reachable for testing that screen on purpose.
-                 */
-                if (!strcmp(e, "adapter")) {
-                    val |= PCF5063X_MBCS1_ADAPTPRES | PCF5063X_MBCS1_ADAPTOK;
-                } else {
-                    val |= PCF5063X_MBCS1_USBPRES | PCF5063X_MBCS1_USBOK;
-                }
-            }
+        if (s->power == IPOD_CLASSIC_PMU_POWER_ADAPTER) {
+            val |= PCF5063X_MBCS1_ADAPTPRES | PCF5063X_MBCS1_ADAPTOK;
+        } else if (s->power == IPOD_CLASSIC_PMU_POWER_USB) {
+            val |= PCF5063X_MBCS1_USBPRES | PCF5063X_MBCS1_USBOK;
         }
         break;
     case PCF5063X_REG_RTCSC:
@@ -246,6 +297,15 @@ static void pmu_reg_write(IPodClassicPMUState *s, uint8_t addr, uint8_t val)
         if (val & PCF5063X_ADCC1_ADCSTART) {
             pmu_start_adc(s);
         }
+        return;
+    case PCF5063X_REG_INT1M:
+    case PCF5063X_REG_INT2M:
+    case PCF5063X_REG_INT3M:
+    case PCF5063X_REG_INT4M:
+    case PCF5063X_REG_INT5M:
+    case PCF50635_REG_INT6M:
+        s->reg[addr] = val;
+        pmu_update_irq(s);
         return;
     default:
         s->reg[addr] = val;
@@ -399,6 +459,16 @@ static void ipod_classic_pmu_reset(DeviceState *dev)
      */
     s->reg[PCF5063X_REG_OOCSTAT] = PCF5063X_OOCSTAT_HEALTHY;
     s->reg[PCF5063X_REG_MBCS1] = PCF5063X_MBCS1_HEALTHY;
+    pmu_update_irq(s);
+}
+
+static void ipod_classic_pmu_init(Object *obj)
+{
+    IPodClassicPMUState *s = IPOD_CLASSIC_PMU(obj);
+
+    /* Not in reset: a power change made at run time survives a guest reset. */
+    s->power = pmu_initial_power();
+    qdev_init_gpio_out_named(DEVICE(obj), &s->irq, "irq", 1);
 }
 
 static const VMStateDescription vmstate_ipod_classic_pmu = {
@@ -433,6 +503,7 @@ static const TypeInfo ipod_classic_pmu_info = {
     .name          = TYPE_IPOD_CLASSIC_PMU,
     .parent        = TYPE_I2C_SLAVE,
     .instance_size = sizeof(IPodClassicPMUState),
+    .instance_init = ipod_classic_pmu_init,
     .class_init    = ipod_classic_pmu_class_init,
 };
 

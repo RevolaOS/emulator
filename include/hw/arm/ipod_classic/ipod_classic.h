@@ -231,6 +231,7 @@ typedef struct {
     IPodClassicClkState *clock0;
     IPodClassicTimerState *timer;
     IPodClassicI2CState *i2c0;
+    IPodClassicPMUState *pmu;
     IPodClassicATAState *ata;
     IPodClassicLCDState *lcd;
     IPodClassicDispState *disp;

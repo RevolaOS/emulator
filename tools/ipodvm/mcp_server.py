@@ -41,7 +41,8 @@ TOOLS = [
          'Boot a RepriseOS CFW image with the complete feature-test configuration and '
          'return once the first screen is stable (VM left running). Takes 45-75 s. Opens '
          'a live window unless headless. The firmware enters standby after about two '
-         'minutes idle only on battery or USB power; any key wakes it.',
+         'minutes idle only on battery or USB power; any key wakes it. vm_power changes '
+         'the power while running.',
          {'firmware': {'type': 'string', 'description': 'path to osos-cfw.bin'},
           'disk': {'type': 'string', 'description': 'test disk image (cloned, never modified)'},
           'repo': {'type': 'string', 'description': 'firmware repository (for '
@@ -78,6 +79,11 @@ TOOLS = [
     tool('vm_list', 'List VMs under /tmp/ipodvm with their window titles (owner session).'),
     tool('vm_status', 'Run state, PC/LR, whether the firmware is in standby (asleep), '
          'power and persist settings.', {'name': NAME}),
+    tool('vm_power', 'Plug in or unplug external power on a running VM, as a PMU plug '
+         'event: the firmware reacts at once and plugging in wakes it from standby. adapter '
+         'idles on the Charging screen; usb or battery leave it and allow standby.',
+         {'name': NAME, 'power': {'type': 'string', 'enum': ['adapter', 'usb', 'battery']}},
+         ['power']),
     tool('vm_quit', 'Stop a VM.', {'name': NAME}),
     tool('vm_run', 'Resume the guest, for `seconds` then pause if given (slow screens and '
          'disk loads need real guest time; a paused guest gets none).',
@@ -153,6 +159,8 @@ def call(name, a):
         return core.list_vms()
     if name == 'vm_status':
         return core.status(vm)
+    if name == 'vm_power':
+        return core.set_power(vm, a['power'])
     if name == 'vm_quit':
         return core.quit_vm(vm)
     if name == 'vm_run':
