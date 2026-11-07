@@ -119,6 +119,14 @@ def show(command, data, args):
         for vm in data:
             state = f'running pid {vm["pid"]}' if vm['running'] else 'stopped'
             print(f'{vm["name"]:16} {state:18} {vm["title"]}')
+    elif command == 'prune':
+        for run in data['removed']:
+            print(f'{run["name"]:16} {run["private"] / 2**20:8.1f} MiB own '
+                  f'({run["allocated"] / 2**20:.1f} MiB with shared clone blocks)')
+        for name in data['running_kept']:
+            print(f'{name:16} running, kept')
+        print(f'{"would free" if data["dry_run"] else "freed"} '
+              f'{data["private_bytes"] / 2**20:.1f} MiB')
     elif command == 'hmp':
         print(data, end='')
     elif command == 'status':
@@ -201,7 +209,7 @@ def main():
     p.add_argument('--here', action='store_true', help='start from the current screen')
     p.set_defaults(func=lambda a: screen.goto(a.name, a.path, not a.here))
 
-    p = named('key', 'resume, send keys with settle waits, screenshot')
+    p = named('key', 'resume, send keys (each waits for the screen to settle), screenshot')
     p.add_argument('keys', nargs='+', help='ret w q e a d s, or select menu up down prev next play')
     p.add_argument('--pause', action='store_true', help='pause afterwards')
     p.set_defaults(func=lambda a: core.key(a.name, a.keys, a.pause))
@@ -227,12 +235,18 @@ def main():
     p.add_argument('--interval', type=float, default=2)
     p.add_argument('--region', metavar='X,Y,W,H')
     p.add_argument('--pause', action='store_true', help='pause afterwards')
+    p.add_argument('--speed', type=int,
+                   help=f'guest speed during the wait, restored afterwards '
+                        f'(default {core.ASLEEP_SPEED} for --until asleep, else unchanged)')
     p.set_defaults(func=lambda a: core.wait(
-        a.name, a.until, a.timeout, a.interval, core.parse_region(a.region), a.pause))
+        a.name, a.until, a.timeout, a.interval, core.parse_region(a.region), a.pause,
+        a.speed))
 
     p = named('run', 'resume the guest (for N seconds, then pause, if given)')
     p.add_argument('seconds', nargs='?', type=float)
-    p.set_defaults(func=lambda a: core.resume(a.name, a.seconds))
+    p.add_argument('--speed', type=int,
+                   help='guest speed for the N seconds, restored afterwards')
+    p.set_defaults(func=lambda a: core.resume(a.name, a.seconds, a.speed))
     named('pause', 'pause the guest').set_defaults(func=lambda a: core.pause(a.name))
     named('status', 'run state, PC/LR, standby (asleep), power, speed').set_defaults(
         func=lambda a: core.status(a.name))
@@ -249,6 +263,13 @@ def main():
     p = sub.add_parser('list', help='list VMs under /tmp/ipodvm')
     p.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
     p.set_defaults(func=lambda a: core.list_vms())
+    p = sub.add_parser('prune', help='delete stopped run directories')
+    p.add_argument('names', nargs='*', help='stopped runs to delete (default: by age)')
+    p.add_argument('--days', type=float, default=7,
+                   help='delete stopped runs launched more than this many days ago')
+    p.add_argument('--dry-run', action='store_true', help='only report what would go')
+    p.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
+    p.set_defaults(func=lambda a: core.prune(a.days, a.names, a.dry_run))
 
     p = named('profile', 'control the function and heap profiler')
     p.add_argument('action', choices=['dump', 'heap', 'reset', 'start', 'stop', 'keys'],

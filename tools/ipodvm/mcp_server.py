@@ -95,8 +95,16 @@ TOOLS = [
     tool('vm_quit', 'Stop a VM.', {'name': NAME}),
     tool('vm_run', 'Resume the guest, for `seconds` then pause if given (slow screens and '
          'disk loads need real guest time; a paused guest gets none).',
-         {'name': NAME, 'seconds': {'type': 'number'}}),
+         {'name': NAME, 'seconds': {'type': 'number'},
+          'speed': {'type': 'integer', 'minimum': 1, 'maximum': core.MAX_SPEED,
+                    'description': 'guest speed for the seconds, restored afterwards'}}),
     tool('vm_pause', 'Pause the guest.', {'name': NAME}),
+    tool('vm_prune', 'Delete stopped run directories under /tmp/ipodvm: the named ones, or '
+         'those launched more than `days` ago. Running VMs are kept. Reports the APFS '
+         'space each run holds on its own (disk clones share the rest).',
+         {'names': {'type': 'array', 'items': {'type': 'string'}},
+          'days': {'type': 'number', 'description': 'default 7'},
+          'dry_run': {'type': 'boolean'}}),
     tool('screen', 'Read the screen as JSON: title, rows (label, value, detail, submenu), '
          'selected row, preview pane text, state (list/other/charging/blank); asleep '
          'when the firmware is in standby (the last frame stays on screen).',
@@ -108,8 +116,8 @@ TOOLS = [
           'from_root': {'type': 'boolean', 'description': 'default true; false starts here'},
           'image': IMAGE},
          ['path']),
-    tool('press', 'Resume and send keys with settle waits. Reports whether the frame '
-         'changed and woke=true if the guest was in standby (the waking key is also '
+    tool('press', 'Resume and send keys, each waiting until the screen settles. Reports '
+         'whether the frame changed and woke=true if the guest was in standby (the waking key is also '
          'delivered). Prefer select/menu for buttons and goto for navigation.',
          {'name': NAME, 'keys': KEYS, 'image': IMAGE, 'pause': PAUSE}, ['keys']),
     tool('select', 'Press Select and verify the screen changed, retrying safely if dropped.',
@@ -118,9 +126,11 @@ TOOLS = [
          {'name': NAME, 'region': REGION, 'image': IMAGE, 'pause': PAUSE}),
     tool('screenshot', 'Return the current screen as an image.', {'name': NAME}),
     tool('wait', 'Run the guest until the screen changes, two polls match, or the '
-         'firmware is in standby (asleep).',
+         'firmware is in standby (asleep). `speed` applies for the wait and is restored '
+         f'afterwards; asleep defaults to {core.ASLEEP_SPEED}.',
          {'name': NAME, 'until': {'type': 'string', 'enum': ['change', 'stable', 'asleep']},
-          'timeout': {'type': 'number'}, 'image': IMAGE, 'pause': PAUSE}),
+          'timeout': {'type': 'number'}, 'image': IMAGE, 'pause': PAUSE,
+          'speed': {'type': 'integer', 'minimum': 1, 'maximum': core.MAX_SPEED}}),
     tool('profile_keys', 'Reset the profiler, send keys, dump: per-function calls and guest '
          'instruction counts and, with heap hooks, the heap allocated, held and leaked by '
          'that input (VM must be launched with profiling).',
@@ -175,7 +185,9 @@ def call(name, a):
     if name == 'vm_quit':
         return core.quit_vm(vm)
     if name == 'vm_run':
-        return core.resume(vm, a.get('seconds'))
+        return core.resume(vm, a.get('seconds'), a.get('speed'))
+    if name == 'vm_prune':
+        return core.prune(a.get('days', 7), a.get('names'), a.get('dry_run', False))
     if name == 'vm_pause':
         return core.pause(vm)
     if name == 'screen':
@@ -191,7 +203,7 @@ def call(name, a):
         return core.screenshot(vm)
     if name == 'wait':
         return core.wait(vm, a.get('until', 'stable'), a.get('timeout', 60),
-                         pause=a.get('pause', False))
+                         pause=a.get('pause', False), speed=a.get('speed'))
     if name == 'profile_keys':
         return trim_profile(core.profile_keys(vm, a['keys'], a.get('settle', 0)), a.get('top'))
     if name == 'profile_dump':

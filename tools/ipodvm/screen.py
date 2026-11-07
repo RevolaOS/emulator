@@ -11,10 +11,9 @@ from difflib import SequenceMatcher
 import json
 from pathlib import Path
 import subprocess
-import time
 
 from core import (QEMU_ROOT, QMP, Failure, asleep, digest, is_blank, log, press,
-                  press_verified, run_dir)
+                  press_verified, run_dir, settle_frame)
 
 OCR_SOURCE = Path(__file__).resolve().parent / 'screentext.swift'
 OCR = QEMU_ROOT / 'build/ipodvm/screentext'
@@ -29,6 +28,9 @@ MAX_WHEEL_BATCH = 3
 BAR_HEIGHT = (12, 70)    # one-line rows are ~23 px, two-line rows ~53 px
 MIN_BAR_WIDTH = 150      # list bars span the list: 160 (with preview pane) or 320
 BATTERY_X = 260          # status icons sit right of this on full-width title bars
+# A scrolled list shows a 6 px scrollbar thumb at its right edge for about two
+# seconds; change detection leaves that strip out so the fade is not a change.
+SCROLLBAR = 8
 
 
 def ensure_ocr():
@@ -67,20 +69,26 @@ def selection_bar(frame):
     background = tuple(v << 3 for v in background)
     marked = [distance(a, background) > 90 or distance(b, background) > 90
               for a, b in zip(column, inner)]
+    at_edge = [distance(a, background) > 90 for a in column]
     best, start = None, None
     for i, bar_row in enumerate(marked + [False]):
         if bar_row:
             if start is None:
                 start = i
         elif start is not None:
-            if BAR_HEIGHT[0] <= i - start <= BAR_HEIGHT[1] and (
-                    best is None or i - start > best[1] - best[0]):
-                best = (start, i)
+            # INNER_X can also hit a scrollbar thumb next to the bar; the bar
+            # itself starts and ends with rows marked at the screen edge.
+            edge_rows = [j for j in range(start, i) if at_edge[j]]
+            if edge_rows:
+                top, end = edge_rows[0], edge_rows[-1] + 1
+                if BAR_HEIGHT[0] <= end - top <= BAR_HEIGHT[1] and (
+                        best is None or end - top > best[1] - best[0]):
+                    best = (top, end)
             start = None
     if best is None:
         return None
     # A list bar starts at the screen edge; progress bars and icons do not.
-    edge = sum(distance(column[i], background) > 90 for i in range(*best))
+    edge = sum(at_edge[i] for i in range(*best))
     if edge * 2 < best[1] - best[0]:
         return None
     top, bottom = best[0] + HEADER, best[1] + HEADER - 1
@@ -228,7 +236,9 @@ def is_title(data, title):
 
 
 def list_region(data):
-    return (0, HEADER, data.get('list_width') or data['_frame'][0], data['_frame'][1] - HEADER)
+    """The list area without its scrollbar strip, for change detection."""
+    width = data.get('list_width') or data['_frame'][0]
+    return (0, HEADER, width - SCROLLBAR, data['_frame'][1] - HEADER)
 
 
 def wake(qmp, data, steps):
@@ -277,10 +287,15 @@ def move_to(qmp, data, target, steps):
             keys = ['e' if delta > 0 else 'q'] * min(abs(delta), MAX_WHEEL_BATCH)
         else:
             keys = [direction] * MAX_WHEEL_BATCH
-        before = digest(data['_frame'], list_region(data))
-        press(qmp, keys)
+        region = list_region(data)
+        before = (digest(data['_frame'], region), data['selected'],
+                  [r['label'] for r in data['rows']])
+        press(qmp, keys, region=region)
         data = read_with(qmp, f'scroll-{target}')
-        if digest(data['_frame'], list_region(data)) == before and row is None:
+        after = (digest(data['_frame'], region), data['selected'],
+                 [r['label'] for r in data['rows']])
+        unmoved = after[0] == before[0] or (after[1] is not None and after[1:] == before[1:])
+        if unmoved and row is None:
             # Reached an end of the list without finding it: try the other way once.
             bounces += 1
             if bounces > 1:
@@ -317,11 +332,13 @@ def to_root(qmp, data, steps):
             data = open_row(qmp, data, 'English', steps)
             continue
         before = data['title']
-        press(qmp, ['w'])
+        # The main menu's preview pane animates; watch only the list it leaves.
+        press(qmp, ['w'], region=list_region(data) if data['state'] == 'list' else None)
         data = read_with(qmp, 'menu')
         steps.append(f'menu: {before!r} -> {data["title"]!r}')
         if data['title'] == before:
-            time.sleep(10)        # slow screens: let the press take effect
+            # Slow screens: give the press up to 10 s more to take effect.
+            settle_frame(qmp, digest(data['_frame']), 10)
             data = read_with(qmp, 'menu')
     raise Failure(f'could not reach the main menu; stuck at {data["title"]!r}')
 

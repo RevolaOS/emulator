@@ -28,7 +28,8 @@ leaves the guest running; pass `--pause` to stop it after a command.
    can take roughly 60 seconds; a black frame at 20 or 30 seconds is not failure.
    If QMP reports the VM paused, send `cont` before waiting.
 2. For each navigation step, send `cont`, then HMP `sendkey <key> 200` through
-   QMP. Wait 3 seconds after a wheel key or 5 seconds after a button, then `stop`.
+   QMP. Wait 3 seconds after a wheel key or 5 seconds after a button, then `stop`
+   (ipodvm continues sooner once the screen has changed and settled).
 3. Capture and inspect a screenshot while paused before choosing the next action.
    A successful QMP reply confirms command delivery, not guest acceptance.
 4. If Select/Menu is dropped, verify the current screen and retry. A wheel touch

@@ -47,7 +47,16 @@ written, and QEMU runs with `-snapshot`, so the clone is not written either.
 `--persist` drops `-snapshot`: guest writes then reach the run's `disk.img`,
 which can be inspected with mtools after `quit`. Launching a name again
 replaces its stopped run directory, including screenshots, profiles and the
-disk clone.
+disk clone. Screen reads go through one scratch screendump per client
+(`.frame-<pid>.ppm`), deleted after each read; only `shots/` keeps images.
+
+`prune` deletes stopped run directories launched more than `--days` ago
+(default 7), or the stopped runs named on the command line; `--dry-run` only
+reports. Running VMs are kept. It reports the space each run holds on its own:
+`disk.img` is an APFS clone that shares its blocks with `--disk`, so `du`
+overstates what deleting a run frees (about 10 MiB per run, mostly the
+firmware copies). Blocks an APFS snapshot still references, such as a Time
+Machine local snapshot, count as shared.
 
 Run `launch` from the firmware repository (or pass `--layout`): the payload
 offset and load address come from its `payload/native/layout.h`. `launch`
@@ -67,10 +76,12 @@ plugging in wakes it from standby. `status` reports the current value.
 `qom-set /machine speed N`, 1–64, 1 = real time). It runs the timer block N
 times faster, and the firmware takes its kernel tick (timer B) and its
 microsecond counter (timer E) from that block, so timeouts such as the
-two-minute standby pass N times sooner: `speed 16` then `wait --until asleep`
-reaches standby in about 8 s. Device timers (wheel, LCD, I²C, SM1, I²S, ATA,
-audio) and the PMU's RTC keep real time, so set `speed 1` before checking
-input, navigation or audio. The value survives a guest reset; `status`
+two-minute standby pass N times sooner. `wait --until asleep` runs at speed
+16 by default and restores the previous speed afterwards, also on a timeout
+or error, reaching standby in about 10 s; `--speed` overrides the factor and
+`run N --speed F` does the same for a fixed run. Device timers (wheel, LCD,
+I²C, SM1, I²S, ATA, audio) and the PMU's RTC keep real time, so set `speed 1`
+before checking input, navigation or audio. The value survives a guest reset; `status`
 reports it.
 
 `launch` opens an SDL window showing the live screen; it also accepts keys
@@ -91,8 +102,9 @@ than a fixed colour, so it does not depend on the theme, accent colour or dark
 mode: it is the longest run of rows, at most 70 px tall, whose colour at x = 1
 or x = 158 (inside the bar on half- and full-width lists, which covers rows
 where a scrolling label crosses x = 1) differs strongly from the list
-background. The bar's width, followed pixel by pixel along its top and bottom
-rows, separates half-width lists with a preview pane from full-width lists. Vision can misread individual glyphs (the Greek
+background, trimmed to its first and last row marked at x = 1 (a scrollbar
+thumb next to the bar also marks x = 158). The bar's width, followed pixel by
+pixel along its top and bottom rows, separates half-width lists with a preview pane from full-width lists. Vision can misread individual glyphs (the Greek
 "Ελληνικά" reads as Latin letters) and a selected label that is too long
 scrolls and reads garbled.
 
@@ -107,27 +119,36 @@ searched downwards, then upwards; the error lists every row seen. `--here`
 starts from the current screen. Selecting a toggle row toggles it.
 
 Wheel keys go in batches of at most three, and each batch is verified by
-reading the screen again. Opening a row uses the verified Select below,
-comparing only the list area so an animated preview pane cannot fake a
-change.
+reading the screen again. Opening a row uses the verified Select below.
+Change detection during navigation compares only the list area, without
+the preview pane (which animates) and the scrollbar strip at the list's right
+edge (shown for about two seconds after scrolling).
 
 ## Input
 
 | Command | Behaviour |
 | --- | --- |
-| `key KEYS…` | resume, send each key (3 s settle after wheel keys, 5 s after buttons), screenshot; reports whether the frame changed and `woke` if the guest was in standby |
-| `select`, `menu` | press and verify the frame changed; if not, run the guest `--settle` s (default 25) more, then wheel-touch and retry only if the touch left the frame unchanged |
-| `wait --until change\|stable\|asleep` | run the guest until the frame differs from the start, two polls match, or the firmware is in standby |
-| `run [N]`, `pause` | resume (for N seconds, then pause) or pause |
+| `key KEYS…` | resume, send each key and wait for the screen to settle, screenshot; reports whether the frame changed and `woke` if the guest was in standby |
+| `select`, `menu` | press and verify the frame changed; if not, run the guest up to `--settle` s (default 25) more, then wheel-touch and retry only if the touch left the frame unchanged |
+| `wait --until change\|stable\|asleep` | run the guest until the frame differs from the start, two polls match, or the firmware is in standby (at `--speed`, default 16 for `asleep`) |
+| `run [N] [--speed F]`, `pause` | resume (for N seconds, then pause) or pause |
 | `shot [FILE]` | screenshot (default: next file in `shots/`) |
 | `status` | run state, standby, PC/LR, title, firmware, profiler, power, speed |
 | `power adapter\|usb\|battery` | change the external power the PMU reports while running |
 | `speed N` | run guest time N times faster (1–64) while running |
 | `hmp LINE…` | raw HMP command, e.g. `hmp info registers` |
 | `list`, `quit` | list VMs under `/tmp/ipodvm`; stop one |
+| `prune [NAME…] [--days N] [--dry-run]` | delete stopped run directories |
 
 Keys: `ret`/`select`, `w`/`menu`, `q`/`up`, `e`/`down`, `a`/`prev`,
 `d`/`next`, `s`/`play`.
+
+Each key is held 200 ms (`sendkey KEY 200`). The screen then counts as
+settled once it has changed and stayed the same for two polls 0.25 s apart,
+at least 0.4 s after the key. A key that changes nothing, or a screen that
+keeps animating, waits the full limit: 3 s after a wheel key, 5 s after a
+button. The screenshot can lag the guest, so an unchanged frame does not prove
+a dropped key.
 
 A successful QMP reply only means the key was delivered. Rows with animated
 previews (the main menu's Settings row scrolls a marquee) change the frame on
@@ -152,11 +173,11 @@ claude mcp add ipodvm -- python3 /path/to/qemu-ipod-classic/tools/ipodvm/mcp_ser
 
 Tools: `disk_prepare`, `vm_launch` (`repo` names the firmware repository;
 relative paths resolve against it),
-`vm_list`, `vm_status`, `vm_power`, `vm_speed`, `vm_quit`, `vm_run`, `vm_pause`, `screen`, `goto`,
+`vm_list`, `vm_status`, `vm_power`, `vm_speed`, `vm_quit`, `vm_run`, `vm_pause`, `vm_prune`, `screen`, `goto`,
 `press`, `select`, `menu`, `screenshot`, `wait`, `profile_keys`,
 `profile_dump`, `profile_control` and `hmp`. Results are JSON text; pass
-`image: true` (or use `screenshot`) to also receive the PNG. Launch and
-navigation take tens of seconds.
+`image: true` (or use `screenshot`) to also receive the PNG. Launch takes
+tens of seconds; navigation takes a few seconds per step.
 
 ## Function profiler
 

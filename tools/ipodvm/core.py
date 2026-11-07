@@ -5,6 +5,8 @@ the CLI and the MCP server can share them. Each VM lives in
 /tmp/ipodvm/<name>/, short enough for macOS's 104-byte Unix socket limit.
 """
 import bisect
+import contextlib
+import ctypes
 import fnmatch
 import hashlib
 import json
@@ -16,7 +18,6 @@ import socket
 import struct
 import subprocess
 import sys
-import tempfile
 import time
 
 TOOL = Path(__file__).resolve().parent
@@ -37,7 +38,11 @@ ENVIRONMENT = dict(
 )
 
 WHEEL_KEYS = {'q', 'e'}
+# After a key, input waits until the frame has changed and then held for
+# SETTLE_HOLDS polls POLL s apart, but at least KEY_FLOOR s (past the 200 ms
+# hold) and at most WHEEL_WAIT or BUTTON_WAIT s.
 WHEEL_WAIT, BUTTON_WAIT = 3.0, 5.0
+POLL, SETTLE_HOLDS, KEY_FLOOR = 0.25, 2, 0.4
 KEY_NAMES = {'select': 'ret', 'menu': 'w', 'up': 'q', 'down': 'e',
              'prev': 'a', 'next': 'd', 'play': 's'}
 VALID_KEYS = set(KEY_NAMES) | set(KEY_NAMES.values())
@@ -70,6 +75,14 @@ def log(message):
 class QMP:
     def __init__(self, run):
         self.run = run
+        # One scratch screendump per client, deleted after every read. QEMU can
+        # still write one after its client timed out and exited; the next
+        # client removes those.
+        self.scratch = run / f'.frame-{os.getpid()}.ppm'
+        for stale in run.glob('.frame-*.ppm'):
+            pid = stale.stem.removeprefix('.frame-')
+            if not (pid.isdigit() and pid_alive(int(pid))):
+                stale.unlink(missing_ok=True)
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.settimeout(30)
         try:
@@ -90,6 +103,8 @@ class QMP:
 
     def __exit__(self, *exc):
         self.socket.close()
+        # A timed-out screendump can still be written after the call failed.
+        self.scratch.unlink(missing_ok=True)
 
     def execute(self, name, arguments=None):
         message = {'execute': name}
@@ -97,7 +112,11 @@ class QMP:
             message['arguments'] = arguments
         self.stream.write((json.dumps(message) + '\n').encode())
         while True:
-            line = self.stream.readline()
+            try:
+                line = self.stream.readline()
+            except TimeoutError:
+                raise Failure(f'{self.run.name}: QMP {name} timed out; '
+                              'is QEMU stopped or hung?')
             if not line:
                 raise Failure('QMP disconnected')
             reply = json.loads(line)
@@ -128,9 +147,11 @@ class QMP:
 
     def frame(self):
         """Return (width, height, rgb bytes) of the current display."""
-        with tempfile.NamedTemporaryFile(suffix='.ppm', dir=RUNS) as tmp:
-            self.execute('screendump', {'filename': tmp.name})
-            return read_ppm(Path(tmp.name).read_bytes())
+        try:
+            self.execute('screendump', {'filename': str(self.scratch)})
+            return read_ppm(self.scratch.read_bytes())
+        finally:
+            self.scratch.unlink(missing_ok=True)
 
     def png(self, path):
         self.execute('screendump', {'filename': str(path), 'format': 'png'})
@@ -620,18 +641,36 @@ def set_power(name, power):
     return {'name': name, 'power': current, 'previous': previous}
 
 
-def set_speed(name, factor):
-    """Run guest time `factor` times faster on a running VM (1 = real time)."""
+def apply_speed(qmp, factor):
+    """Set the machine's timer speed; return (previous, current)."""
     if not 1 <= factor <= MAX_SPEED:
         raise Failure(f'speed must be 1 to {MAX_SPEED}, not {factor}')
-    run = run_dir(name)
-    with QMP(run) as qmp:
-        previous = qmp.execute('qom-get', {'path': '/machine', 'property': 'speed'})
-        qmp.execute('qom-set', {'path': '/machine', 'property': 'speed', 'value': factor})
-        current = qmp.execute('qom-get', {'path': '/machine', 'property': 'speed'})
-    record = json.loads((run / 'launch.json').read_text())
+    previous = qmp.execute('qom-get', {'path': '/machine', 'property': 'speed'})
+    qmp.execute('qom-set', {'path': '/machine', 'property': 'speed', 'value': factor})
+    current = qmp.execute('qom-get', {'path': '/machine', 'property': 'speed'})
+    record = json.loads((qmp.run / 'launch.json').read_text())
     record['speed'] = current
-    (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
+    (qmp.run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
+    return previous, current
+
+
+@contextlib.contextmanager
+def speed_for(qmp, factor):
+    """Run the block at `factor` (None: unchanged), then restore the previous speed."""
+    if factor is None:
+        yield
+        return
+    previous, _ = apply_speed(qmp, factor)
+    try:
+        yield
+    finally:
+        apply_speed(qmp, previous)
+
+
+def set_speed(name, factor):
+    """Run guest time `factor` times faster on a running VM (1 = real time)."""
+    with QMP(run_dir(name)) as qmp:
+        previous, current = apply_speed(qmp, factor)
     return {'name': name, 'speed': current, 'previous': previous}
 
 
@@ -665,10 +704,65 @@ def quit_vm(name):
     raise Failure(f'{name}: QEMU pid {pid} still running 5 s after quit')
 
 
-def resume(name, seconds=None):
+def private_size(path):
+    """Bytes only this file holds on APFS (clones share the rest), or None."""
+    class AttrList(ctypes.Structure):
+        _fields_ = [('bitmapcount', ctypes.c_ushort), ('reserved', ctypes.c_uint16),
+                    ('commonattr', ctypes.c_uint32), ('volattr', ctypes.c_uint32),
+                    ('dirattr', ctypes.c_uint32), ('fileattr', ctypes.c_uint32),
+                    ('forkattr', ctypes.c_uint32)]
+    returned, private = 0x80000000, 0x8   # ATTR_CMN_RETURNED_ATTRS, ATTR_CMNEXT_PRIVATESIZE
+    request = AttrList(5, 0, returned, 0, 0, 0, private)
+    buffer = ctypes.create_string_buffer(64)
+    libc = ctypes.CDLL(None)
+    # FSOPT_NOFOLLOW | FSOPT_ATTR_CMN_EXTENDED
+    if libc.getattrlist(str(path).encode(), ctypes.byref(request), buffer, len(buffer), 0x21):
+        return None
+    attributes = struct.unpack_from('<5I', buffer, 4)
+    return struct.unpack_from('<q', buffer, 24)[0] if attributes[4] & private else None
+
+
+def run_usage(run):
+    """(allocated, private) bytes of a run directory."""
+    allocated = private = 0
+    for path in run.rglob('*'):
+        if path.is_file() and not path.is_symlink():
+            blocks = path.lstat().st_blocks * 512
+            allocated += blocks
+            size = private_size(path) if sys.platform == 'darwin' else None
+            private += blocks if size is None else size
+    return allocated, private
+
+
+def prune(days=7.0, names=None, dry_run=False):
+    """Delete stopped runs launched more than `days` ago, or the named stopped runs."""
+    if names:
+        runs = [run_dir(name) for name in names]
+    else:
+        cutoff = time.time() - days * 86400
+        runs = [r for r in sorted(RUNS.iterdir()) if (r / 'launch.json').exists()
+                and (r / 'launch.json').stat().st_mtime < cutoff] if RUNS.exists() else []
+    removed, kept, freed = [], [], 0
+    for run in runs:
+        if vm_pid(run):
+            kept.append(run.name)
+            continue
+        allocated, private = run_usage(run)
+        removed.append({'name': run.name, 'allocated': allocated, 'private': private})
+        freed += private
+        if not dry_run:
+            shutil.rmtree(run)
+    return {'removed': removed, 'running_kept': kept, 'private_bytes': freed,
+            'dry_run': dry_run}
+
+
+def resume(name, seconds=None, speed=None):
+    """Resume; with `seconds`, run that many host seconds (at `speed`, then
+    restored) and pause again."""
     with QMP(run_dir(name)) as qmp:
         if seconds:
-            qmp.run_for(seconds)
+            with speed_for(qmp, speed):
+                qmp.run_for(seconds)
             return {'name': name, 'state': 'paused', 'ran_seconds': seconds}
         qmp.cont()
     return {'name': name, 'state': 'running'}
@@ -698,16 +792,36 @@ def asleep(regs):
     return regs.get('pc', 0) in STANDBY_WFI
 
 
-def press(qmp, keys, pause=False):
-    """Resume, send each key with its settle wait; pause afterwards if asked."""
+def settle_frame(qmp, before, limit, region=None, floor=0.0):
+    """Poll the running guest until the frame (or region) differs from `before`
+    and the next SETTLE_HOLDS polls match it, but no sooner than `floor` and no
+    later than `limit` seconds. Return the last digest."""
+    started = time.monotonic()
+    changed, holds = None, 0
+    while True:
+        time.sleep(POLL)
+        current = digest(qmp.frame(), region)
+        if current != before:
+            holds = holds + 1 if current == changed else 0
+            changed = current
+        elapsed = time.monotonic() - started
+        if (holds >= SETTLE_HOLDS and elapsed >= floor) or elapsed >= limit:
+            return current
+
+
+def press(qmp, keys, pause=False, region=None):
+    """Resume, send each key and wait for the screen to settle; pause afterwards
+    if asked. A key that changes nothing waits its full limit."""
     keys = [KEY_NAMES.get(k, k) for k in keys]
     unknown = [k for k in keys if k not in VALID_KEYS]
     if unknown:
         raise Failure(f'unknown keys {unknown}; use {sorted(VALID_KEYS)}')
     qmp.cont()
     for key in keys:
+        before = digest(qmp.frame(), region)
         qmp.hmp(f'sendkey {key} 200')
-        time.sleep(WHEEL_WAIT if key in WHEEL_KEYS else BUTTON_WAIT)
+        settle_frame(qmp, before, WHEEL_WAIT if key in WHEEL_KEYS else BUTTON_WAIT, region,
+                     KEY_FLOOR)
     if pause:
         qmp.stop()
 
@@ -728,24 +842,24 @@ def key(name, keys, pause=False):
 def press_verified(qmp, which, region=None, attempts=3, settle=25.0, touch=('q', 'e')):
     """Press Select/Menu until the frame (or region) changes, retrying safely.
 
-    An unchanged frame gets `settle` more seconds of guest time first (slow
-    screens). A retry follows a wheel touch only if the touch left the frame
-    unchanged; otherwise the first press may have landed late, or the touch
-    moved the selection, and retrying could double-apply.
+    An unchanged frame gets up to `settle` more seconds of guest time first
+    (slow screens), returning as soon as the change has settled. A retry
+    follows a wheel touch only if the touch left the frame unchanged;
+    otherwise the first press may have landed late, or the touch moved the
+    selection, and retrying could double-apply.
     """
     key_name = KEY_NAMES.get(which, which)
     before = digest(qmp.frame(), region)
     for attempt in range(1, attempts + 1):
-        press(qmp, [key_name])
+        press(qmp, [key_name], region=region)
         if digest(qmp.frame(), region) != before:
             return attempt
-        time.sleep(settle)
-        if digest(qmp.frame(), region) != before:
+        if settle_frame(qmp, before, settle, region) != before:
             return attempt
         if attempt == attempts:
             raise Failure(f'{which}: screen unchanged after {attempt} attempts; '
                           f'{qmp.shot(which + "-dropped")}')
-        press(qmp, list(touch))
+        press(qmp, list(touch), region=region)
         if digest(qmp.frame(), region) != before:
             raise Failure(f'{which}: the wheel touch changed the screen, so the first press '
                           f'may have landed late or the list was at an edge; not retrying. '
@@ -763,11 +877,18 @@ def button(name, which, region=None, attempts=3, settle=25.0, pause=False):
         return {'shot': str(qmp.shot(which)), 'attempts': attempt}
 
 
-def wait(name, until='stable', timeout=60.0, interval=2.0, region=None, pause=False):
+ASLEEP_SPEED = 16
+
+
+def wait(name, until='stable', timeout=60.0, interval=2.0, region=None, pause=False,
+         speed=None):
     """Run the guest until the frame differs from the start, two polls match, or
-    the firmware is in standby (`until='asleep'`)."""
+    the firmware is in standby (`until='asleep'`). `speed` applies for the wait
+    and is restored afterwards; `until='asleep'` defaults to ASLEEP_SPEED."""
+    if speed is None and until == 'asleep':
+        speed = ASLEEP_SPEED
     run = run_dir(name)
-    with QMP(run) as qmp:
+    with QMP(run) as qmp, speed_for(qmp, speed):
         start = previous = digest(qmp.frame(), region)
         started = time.time()
         qmp.cont()
