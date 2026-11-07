@@ -63,6 +63,16 @@ on USB or battery it enters standby after about two minutes idle.
 reacts at once: unplugging the adapter leaves the Charging screen, and
 plugging in wakes it from standby. `status` reports the current value.
 
+`speed N` fast-forwards guest time on a running VM (QMP
+`qom-set /machine speed N`, 1–64, 1 = real time). It runs the timer block N
+times faster, and the firmware takes its kernel tick (timer B) and its
+microsecond counter (timer E) from that block, so timeouts such as the
+two-minute standby pass N times sooner: `speed 16` then `wait --until asleep`
+reaches standby in about 8 s. Device timers (wheel, LCD, I²C, SM1, I²S, ATA,
+audio) and the PMU's RTC keep real time, so set `speed 1` before checking
+input, navigation or audio. The value survives a guest reset; `status`
+reports it.
+
 `launch` opens an SDL window showing the live screen; it also accepts keys
 typed into it. Paused guests show their last frame. The title (also shown by
 `list` and `status`) names the VM, the repository and branch it was launched
@@ -107,11 +117,12 @@ change.
 | --- | --- |
 | `key KEYS…` | resume, send each key (3 s settle after wheel keys, 5 s after buttons), screenshot; reports whether the frame changed and `woke` if the guest was in standby |
 | `select`, `menu` | press and verify the frame changed; if not, run the guest `--settle` s (default 25) more, then wheel-touch and retry only if the touch left the frame unchanged |
-| `wait --until change\|stable` | run the guest until the frame differs from the start, or two polls match |
+| `wait --until change\|stable\|asleep` | run the guest until the frame differs from the start, two polls match, or the firmware is in standby |
 | `run [N]`, `pause` | resume (for N seconds, then pause) or pause |
 | `shot [FILE]` | screenshot (default: next file in `shots/`) |
-| `status` | run state, standby, PC/LR, title, firmware, profiler, power |
+| `status` | run state, standby, PC/LR, title, firmware, profiler, power, speed |
 | `power adapter\|usb\|battery` | change the external power the PMU reports while running |
+| `speed N` | run guest time N times faster (1–64) while running |
 | `hmp LINE…` | raw HMP command, e.g. `hmp info registers` |
 | `list`, `quit` | list VMs under `/tmp/ipodvm`; stop one |
 
@@ -141,7 +152,7 @@ claude mcp add ipodvm -- python3 /path/to/qemu-ipod-classic/tools/ipodvm/mcp_ser
 
 Tools: `disk_prepare`, `vm_launch` (`repo` names the firmware repository;
 relative paths resolve against it),
-`vm_list`, `vm_status`, `vm_quit`, `vm_run`, `vm_pause`, `screen`, `goto`,
+`vm_list`, `vm_status`, `vm_power`, `vm_speed`, `vm_quit`, `vm_run`, `vm_pause`, `screen`, `goto`,
 `press`, `select`, `menu`, `screenshot`, `wait`, `profile_keys`,
 `profile_dump`, `profile_control` and `hmp`. Results are JSON text; pass
 `image: true` (or use `screenshot`) to also receive the PNG. Launch and

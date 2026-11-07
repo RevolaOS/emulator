@@ -140,6 +140,12 @@ static uint32_t chan_freq(IPodClassicTimerChannel *c)
     return base / div / (c->pre + 1);
 }
 
+/* The rate the ptimer runs at: the programmed rate times the time scale. */
+static uint32_t chan_scaled_freq(IPodClassicTimerChannel *c)
+{
+    return MIN((uint64_t)chan_freq(c) * c->parent->time_scale, UINT32_MAX);
+}
+
 /*
  * Reprogram a channel and PUT THE COUNT BACK TO THE TOP. The second half is a
  * known deviation, kept deliberately and written down here rather than fixed
@@ -196,7 +202,7 @@ static void chan_reload(IPodClassicTimerChannel *c)
     }
 
     ptimer_transaction_begin(c->ptimer);
-    ptimer_set_freq(c->ptimer, chan_freq(c));
+    ptimer_set_freq(c->ptimer, chan_scaled_freq(c));
     ptimer_set_limit(c->ptimer, limit, 1);
     if (c->cmd & S5L8702_TIMER_CMD_EN) {
         ptimer_run(c->ptimer, 0);       /* 0: reload and keep going */
@@ -391,6 +397,23 @@ static const MemoryRegionOps ipod_classic_timer_ops = {
     .valid.max_access_size = 4,
 };
 
+/*
+ * Not part of the hardware: a host-side speed-up for tests that wait on guest
+ * time. Changing the rate keeps each running channel's current count, so a
+ * period in progress finishes at the new rate rather than restarting.
+ */
+void ipod_classic_timer_set_scale(IPodClassicTimerState *s, uint32_t scale)
+{
+    s->time_scale = MAX(1, MIN(scale, IPOD_CLASSIC_TIMER_MAX_SCALE));
+    for (unsigned i = 0; i < S5L8702_NUM_TIMERS; i++) {
+        IPodClassicTimerChannel *c = &s->chan[i];
+
+        ptimer_transaction_begin(c->ptimer);
+        ptimer_set_freq(c->ptimer, chan_scaled_freq(c));
+        ptimer_transaction_commit(c->ptimer);
+    }
+}
+
 static void ipod_classic_timer_reset(DeviceState *dev)
 {
     IPodClassicTimerState *s = IPOD_CLASSIC_TIMER(dev);
@@ -418,6 +441,7 @@ static void ipod_classic_timer_init(Object *obj)
 
     sysbus_init_irq(sbd, &s->irq16);
     sysbus_init_irq(sbd, &s->irq32);
+    s->time_scale = 1;
 
     for (unsigned i = 0; i < S5L8702_NUM_TIMERS; i++) {
         s->chan[i].parent = s;

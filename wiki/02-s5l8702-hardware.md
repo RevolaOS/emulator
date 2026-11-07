@@ -162,7 +162,7 @@ an unmapped address is not a harmless zero, it is a *data abort*.
 |---|---|---|---|
 | CPU + RAM | — | `ipod_classic.c` | ARM926EJ-S, 64 MB SDRAM, IRAM0/IRAM1, and the **IRAM0 alias at `0x0`**, from which the ARM926 takes its exceptions |
 | VIC0 / VIC1 | `0x38E00000` / `+0x1000` | `hw/intc/pl192.c` (stock) | 64 lines. The retailOS dispatcher lives in IRAM (`0x22004DA0`), reads both banks **with no cross condition** and serves one interrupt per entry |
-| Timers | `0x3C700000` | `ipod_classic_timer.c` | 8 channels; A–D 16-bit on IRQ 8, E–H 32-bit on IRQ 7. **Interval mode only**; PCLK is treated as ECLK and a warning is issued via `-d unimp` if anyone selects it |
+| Timers | `0x3C700000` | `ipod_classic_timer.c` | 8 channels; A–D 16-bit on IRQ 8, E–H 32-bit on IRQ 7. **Interval mode only**; PCLK is treated as ECLK and a warning is issued via `-d unimp` if anyone selects it. The machine's `speed` property (1–64, settable while running) multiplies every channel's rate to fast-forward guest time |
 | Clock / PLL | `0x3C500000` | `ipod_classic_clk.c` | `SWRCON` really resets, `RSTSR`, `PLLMOD2`, and `PLLLOCK` reports as locked the PLLs that `PLLMODE` enabled |
 | I²C0 + PCF50635 | `0x3C600000` | `ipod_classic_i2c.c`, `ipod_classic_pmu.c` | Full transaction with **status and control in separate registers** (`IICCON[13:8]` / `IICSTA2[13:8]`), a byte every **25 virtual µs**, PMU register file, ADC, and read-to-clear INT1..6. **No alarm, no charging, no regulators** |
 | ATA + DMA | `0x38700000` | `ipod_classic_ata.c` | Apple's bridge, not a direct *task file*: reading a register starts a cycle whose result appears in `ATA_PIO_RDATA`. It really reads. Only bit 0 of `ATA_IRQSTAT`; the others are `UNDETERMINED` |

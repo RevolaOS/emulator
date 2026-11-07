@@ -78,12 +78,20 @@ TOOLS = [
          ['base', 'out']),
     tool('vm_list', 'List VMs under /tmp/ipodvm with their window titles (owner session).'),
     tool('vm_status', 'Run state, PC/LR, whether the firmware is in standby (asleep), '
-         'power and persist settings.', {'name': NAME}),
+         'power, persist and speed settings.', {'name': NAME}),
     tool('vm_power', 'Plug in or unplug external power on a running VM, as a PMU plug '
          'event: the firmware reacts at once and plugging in wakes it from standby. adapter '
          'idles on the Charging screen; usb or battery leave it and allow standby.',
          {'name': NAME, 'power': {'type': 'string', 'enum': ['adapter', 'usb', 'battery']}},
          ['power']),
+    tool('vm_speed', 'Fast-forward guest time on a running VM: the timer block (kernel '
+         'tick, microsecond counter) runs `factor` times faster, so timeouts such as the '
+         'two-minute standby pass sooner. Device timers (wheel, LCD, audio, ATA) and the '
+         'RTC keep real time, so set 1 again before input or audio checks.',
+         {'name': NAME, 'factor': {'type': 'integer', 'minimum': 1,
+                                   'maximum': core.MAX_SPEED,
+                                   'description': '1 = real time'}},
+         ['factor']),
     tool('vm_quit', 'Stop a VM.', {'name': NAME}),
     tool('vm_run', 'Resume the guest, for `seconds` then pause if given (slow screens and '
          'disk loads need real guest time; a paused guest gets none).',
@@ -109,8 +117,9 @@ TOOLS = [
     tool('menu', 'Press Menu and verify the screen changed, retrying safely if dropped.',
          {'name': NAME, 'region': REGION, 'image': IMAGE, 'pause': PAUSE}),
     tool('screenshot', 'Return the current screen as an image.', {'name': NAME}),
-    tool('wait', 'Run the guest until the screen changes or two polls match.',
-         {'name': NAME, 'until': {'type': 'string', 'enum': ['change', 'stable']},
+    tool('wait', 'Run the guest until the screen changes, two polls match, or the '
+         'firmware is in standby (asleep).',
+         {'name': NAME, 'until': {'type': 'string', 'enum': ['change', 'stable', 'asleep']},
           'timeout': {'type': 'number'}, 'image': IMAGE, 'pause': PAUSE}),
     tool('profile_keys', 'Reset the profiler, send keys, dump: per-function calls and guest '
          'instruction counts and, with heap hooks, the heap allocated, held and leaked by '
@@ -161,6 +170,8 @@ def call(name, a):
         return core.status(vm)
     if name == 'vm_power':
         return core.set_power(vm, a['power'])
+    if name == 'vm_speed':
+        return core.set_speed(vm, a['factor'])
     if name == 'vm_quit':
         return core.quit_vm(vm)
     if name == 'vm_run':

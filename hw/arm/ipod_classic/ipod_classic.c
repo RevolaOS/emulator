@@ -13,6 +13,7 @@
 
 #include "qemu/osdep.h"
 #include "qapi/error.h"
+#include "qapi/visitor.h"
 #include "hw/arm/boot.h"
 #include "hw/loader.h"
 #include "elf.h"
@@ -415,6 +416,36 @@ static void ipod_classic_set_power(Object *obj, const char *value, Error **errp)
     error_setg(errp, "power must be battery, usb or adapter, not \"%s\"", value);
 }
 
+static void ipod_classic_get_speed(Object *obj, Visitor *v, const char *name,
+                                   void *opaque, Error **errp)
+{
+    IPodClassicMachineState *nms = IPOD_CLASSIC_MACHINE(obj);
+    uint32_t value = nms->timer ? nms->timer->time_scale : 1;
+
+    visit_type_uint32(v, name, &value, errp);
+}
+
+static void ipod_classic_set_speed(Object *obj, Visitor *v, const char *name,
+                                   void *opaque, Error **errp)
+{
+    IPodClassicMachineState *nms = IPOD_CLASSIC_MACHINE(obj);
+    uint32_t value;
+
+    if (!visit_type_uint32(v, name, &value, errp)) {
+        return;
+    }
+    if (!nms->timer) {
+        error_setg(errp, "speed: the timers do not exist yet");
+        return;
+    }
+    if (value < 1 || value > IPOD_CLASSIC_TIMER_MAX_SCALE) {
+        error_setg(errp, "speed must be 1 to %d, not %" PRIu32,
+                   IPOD_CLASSIC_TIMER_MAX_SCALE, value);
+        return;
+    }
+    ipod_classic_timer_set_scale(nms->timer, value);
+}
+
 static void ipod_classic_instance_init(Object *obj)
 {
     object_property_add_str(obj, "bootrom", ipod_classic_get_bootrom_path,
@@ -453,6 +484,15 @@ static void ipod_classic_instance_init(Object *obj)
         "External power the PMU reports: battery, usb or adapter. Settable "
         "while running (qom-set /machine power usb); the start-up value "
         "comes from PMUCHARGER.");
+
+    object_property_add(obj, "speed", "uint32", ipod_classic_get_speed,
+                        ipod_classic_set_speed, NULL, NULL);
+    object_property_set_description(obj, "speed",
+        "Run the S5L8702 timer block 1 to 64 times faster than programmed, so "
+        "the firmware's kernel tick and microsecond counter, and with them "
+        "guest time, pass that much faster. Settable while running "
+        "(qom-set /machine speed 16). Device timers (wheel, LCD, I2C, audio, "
+        "ATA) and the PMU RTC keep real time, so use 1 for input and audio.");
 }
 
 static inline qemu_irq s5l8702_get_irq(IPodClassicMachineState *s, int n)

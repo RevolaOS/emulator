@@ -52,6 +52,10 @@ STANDBY_WFI = range(0x22002e6c, 0x22002e78)
 # without the wall adapter; on the adapter it idles on the Charging screen.
 POWER = {'adapter': 'adapter', 'usb': 'usb', 'battery': None}
 
+# speed: the machine's "speed" property runs the timer block, and with it the
+# firmware's kernel tick and microsecond counter, up to 64x faster.
+MAX_SPEED = 64
+
 
 class Failure(Exception):
     pass
@@ -597,7 +601,8 @@ def status(name):
             'pc': f'{regs["pc"]:#010x}', 'lr': f'{regs["lr"]:#010x}',
             'title': record.get('title', ''), 'firmware': record['firmware'],
             'profile': record.get('profile'), 'power': record.get('power', 'adapter'),
-            'persist': record.get('persist', False), 'run': str(run)}
+            'persist': record.get('persist', False), 'speed': record.get('speed', 1),
+            'run': str(run)}
 
 
 def set_power(name, power):
@@ -613,6 +618,21 @@ def set_power(name, power):
     record['power'] = current
     (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
     return {'name': name, 'power': current, 'previous': previous}
+
+
+def set_speed(name, factor):
+    """Run guest time `factor` times faster on a running VM (1 = real time)."""
+    if not 1 <= factor <= MAX_SPEED:
+        raise Failure(f'speed must be 1 to {MAX_SPEED}, not {factor}')
+    run = run_dir(name)
+    with QMP(run) as qmp:
+        previous = qmp.execute('qom-get', {'path': '/machine', 'property': 'speed'})
+        qmp.execute('qom-set', {'path': '/machine', 'property': 'speed', 'value': factor})
+        current = qmp.execute('qom-get', {'path': '/machine', 'property': 'speed'})
+    record = json.loads((run / 'launch.json').read_text())
+    record['speed'] = current
+    (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
+    return {'name': name, 'speed': current, 'previous': previous}
 
 
 def list_vms():
@@ -744,7 +764,8 @@ def button(name, which, region=None, attempts=3, settle=25.0, pause=False):
 
 
 def wait(name, until='stable', timeout=60.0, interval=2.0, region=None, pause=False):
-    """Run the guest until the frame differs from the start, or two polls match."""
+    """Run the guest until the frame differs from the start, two polls match, or
+    the firmware is in standby (`until='asleep'`)."""
     run = run_dir(name)
     with QMP(run) as qmp:
         start = previous = digest(qmp.frame(), region)
@@ -752,6 +773,8 @@ def wait(name, until='stable', timeout=60.0, interval=2.0, region=None, pause=Fa
         qmp.cont()
         try:
             while time.time() - started < timeout:
+                if until == 'asleep' and asleep(qmp.registers()):
+                    break
                 time.sleep(interval)
                 current = digest(qmp.frame(), region)
                 if until == 'change' and current != start:

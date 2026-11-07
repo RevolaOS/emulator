@@ -131,6 +131,7 @@ def show(command, data, args):
                   f'{data["profile"].get("heap_hooks", 0)} heap hooks')
         print(f'  power    {data["power"]}'
               + ('  persist (guest writes reach the run\'s disk.img)' if data['persist'] else ''))
+        print(f'  speed    {data["speed"]}x')
     else:
         for key, value in data.items():
             if value is not None:
@@ -221,7 +222,7 @@ def main():
     p.set_defaults(func=lambda a: core.screenshot(a.name, a.output))
 
     p = named('wait', 'run the guest until the screen changes or settles')
-    p.add_argument('--until', choices=['change', 'stable'], default='stable')
+    p.add_argument('--until', choices=['change', 'stable', 'asleep'], default='stable')
     p.add_argument('--timeout', type=float, default=60)
     p.add_argument('--interval', type=float, default=2)
     p.add_argument('--region', metavar='X,Y,W,H')
@@ -233,11 +234,14 @@ def main():
     p.add_argument('seconds', nargs='?', type=float)
     p.set_defaults(func=lambda a: core.resume(a.name, a.seconds))
     named('pause', 'pause the guest').set_defaults(func=lambda a: core.pause(a.name))
-    named('status', 'run state, PC/LR, standby (asleep), power').set_defaults(
+    named('status', 'run state, PC/LR, standby (asleep), power, speed').set_defaults(
         func=lambda a: core.status(a.name))
     p = named('power', 'plug in or unplug external power on the running VM')
     p.add_argument('power', choices=sorted(core.POWER))
     p.set_defaults(func=lambda a: core.set_power(a.name, a.power))
+    p = named('speed', 'run guest time N times faster on the running VM (1 = real time)')
+    p.add_argument('factor', type=int)
+    p.set_defaults(func=lambda a: core.set_speed(a.name, a.factor))
     named('quit', 'stop the VM').set_defaults(func=lambda a: core.quit_vm(a.name))
     p = named('hmp', 'run a raw HMP command (e.g. "info registers")')
     p.add_argument('line', nargs='+')

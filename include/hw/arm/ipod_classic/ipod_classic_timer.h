@@ -107,9 +107,18 @@ struct IPodClassicTimerState {
     MemoryRegion iomem;
     IPodClassicTimerChannel chan[S5L8702_NUM_TIMERS];
     uint32_t tstat;
+    uint32_t time_scale;        /* host-side speed-up, 1 = real time */
 
     qemu_irq irq16;             /* IRQ 8, shared by A..D */
     qemu_irq irq32;             /* IRQ 7, shared by E..H */
 };
+
+#define IPOD_CLASSIC_TIMER_MAX_SCALE 64
+
+/*
+ * Run every channel `scale` times faster than its programmed rate, so guest
+ * time passes that much faster in host time. Counts are kept; not migrated.
+ */
+void ipod_classic_timer_set_scale(IPodClassicTimerState *s, uint32_t scale);
 
 #endif
