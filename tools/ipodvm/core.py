@@ -30,11 +30,12 @@ RUNS = Path('/tmp/ipodvm')
 # IMG1 header stripped for QEMU's raw -kernel load at 0x08000000.
 IMG1_HEADER = 0x800
 
-# Complete feature-test configuration (AGENTS.md, README "Running the music player").
+# Complete feature-test configuration for firmware 2.0.5 (AGENTS.md, README
+# "Firmware 2.0.5 and RepriseOS"): the per-frame engine model as in run7g.sh,
+# plus SHA1_ZERO for test disks whose iTunesDB hash is blanked.
 ENVIRONMENT = dict(
-    IRAMSPILL='0x10000', SHA1_ZERO='1', SM1_IRQ='1', SM1_SLOTS='1',
-    SM1_NSLOTS='2', SM1_DECODE='1', SM1_FEED_OFF='1', DISP_ALPHA='1',
-    PMUCHARGER='adapter', HLE_AUDIO_DATAPATH='1', HLE_AUDIO_SUSTAIN='1',
+    SHA1_ZERO='1', SM1_IRQ='1', SM1_SYNC='1', SM1_DECODE='1',
+    HLE_AUDIO_DATAPATH='1', AUDIOPACE='1', DISP_ALPHA='1', PMUCHARGER='adapter',
 )
 
 WHEEL_KEYS = {'q', 'e'}
@@ -760,6 +761,12 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=
                '-gdb', f'unix:{run / "gdb.sock"},server=on,wait=off',
                '-no-reboot', '-no-shutdown',
                '-display', 'none' if headless else 'sdl']
+    # A windowed VM plays through the host's output; SDL is the build's only
+    # live backend. The codec boots at -32 dB, so 20 dB of make-up gain gives a
+    # normal desk level. Headless VMs stay silent and only record AUDIOWAV.
+    if not headless:
+        environment.update(AUDIOLIVE='1', AUDIOGAIN='20')
+        command += ['-audio', 'sdl']
 
     profiling = None
     hooks = heap_hooks(heap) if heap is not None else []

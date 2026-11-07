@@ -225,7 +225,8 @@ and that lands on memory which is not ours, freezing the UI mid-transition while
 keeps playing.
 
 `AUDIOWAV=/path.wav` captures everything the I2S clocks out. `AUDIOLIVE=1` also plays
-it through QEMU's `-audio` backend, scaled by the codec's headphone gain (`AUDIOGAIN`,
+it through QEMU's `-audio` backend (`-audio sdl` on macOS, where the build has no
+CoreAudio backend), scaled by the codec's headphone gain (`AUDIOGAIN`,
 see [Firmware 2.0.5 and RepriseOS](#firmware-205-and-repriseos)). The WAV records the
 bus before that gain.
 
@@ -300,15 +301,12 @@ python3 tools/ipodvm/ipodvm.py launch --firmware <osos-cfw.bin> --disk <disk.img
 
 ### Playback configurations
 
-ipodvm and the UI tests use the flags in
-[Running the music player](#running-the-music-player), with `SHA1_ZERO=1` and a disk
-whose iTunesDB hash is blanked. The playback limits under
-[Known limits](#known-limits) apply to that configuration.
-
-[`tools/ipod_classic/run7g.sh`](tools/ipod_classic/run7g.sh) selects the per-frame
-engine model instead (`SM1_IRQ SM1_SYNC SM1_DECODE HLE_AUDIO_DATAPATH AUDIOPACE
-AUDIOLIVE AUDIOGAIN DISP_ALPHA`, without `SHA1_ZERO`) and documents each flag. It
-expects the device's `sysinfo.bin` and a disk signed for that device's GUID.
+ipodvm and [`tools/ipod_classic/run7g.sh`](tools/ipod_classic/run7g.sh) both use the
+per-frame engine model (`SM1_IRQ SM1_SYNC SM1_DECODE HLE_AUDIO_DATAPATH AUDIOPACE
+DISP_ALPHA`); `run7g.sh` documents each flag. ipodvm adds `SHA1_ZERO=1` for disks whose
+iTunesDB hash is blanked, and its windowed VMs play through the host with
+`AUDIOLIVE=1 AUDIOGAIN=20`. `run7g.sh` expects the device's `sysinfo.bin` and a disk
+signed for that device's GUID.
 
 ### Files and disks for `run7g.sh`
 

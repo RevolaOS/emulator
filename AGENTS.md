@@ -5,18 +5,18 @@ workspace directory. Follow [the RepriseOS UI test procedure](docs/repriseos-tes
 before concluding that input or navigation is broken. Older sibling launchers may
 omit the required configuration below.
 
-Start iPod Classic and RepriseOS test VMs with the complete playback configuration
-in [README.md](README.md#running-the-music-player), unless the test specifically
+Start RepriseOS (firmware 2.0.5) test VMs with the complete playback configuration
+in [README.md](README.md#playback-configurations), unless the test specifically
 needs a bare hardware baseline:
 
 ```sh
-IRAMSPILL=0x10000 SHA1_ZERO=1 SM1_IRQ=1 \
-SM1_SLOTS=1 SM1_NSLOTS=2 SM1_DECODE=1 SM1_FEED_OFF=1 \
-DISP_ALPHA=1 PMUCHARGER=adapter \
-HLE_AUDIO_DATAPATH=1 HLE_AUDIO_SUSTAIN=1 \
+SHA1_ZERO=1 SM1_IRQ=1 SM1_SYNC=1 SM1_DECODE=1 \
+HLE_AUDIO_DATAPATH=1 AUDIOPACE=1 DISP_ALPHA=1 PMUCHARGER=adapter \
 HLE_AUDIO_DISK="$reprise_disk" AUDIOWAV="$reprise_run/audio.wav" \
 python3 "$reprise_launcher" --headless
 ```
+
+Add `AUDIOLIVE=1 AUDIOGAIN=20` and `-audio sdl` to hear it on the host.
 
 [`tools/ipodvm`](tools/ipodvm/README.md) applies this configuration and the
 input procedure; prefer it over per-run launcher and `remote.py` copies.

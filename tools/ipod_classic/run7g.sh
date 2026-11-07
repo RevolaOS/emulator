@@ -10,7 +10,7 @@
 #   disk/E-2.0.5.img               mkdisk6g4k.py <out> Firmware-38.9.0.5 <fat32.img>
 #
 # DISK=<image> picks another disk, e.g. one with music from mkmusic.sh.
-# AUDIO_BACKEND=<qemu audio driver> overrides coreaudio (macOS) / pa (Linux).
+# AUDIO_BACKEND=<qemu audio driver> overrides sdl (macOS) / pa (Linux).
 #
 # The payload goes to 0x08b3c000 (CFW_PAYLOAD_BASE in osos-lab for 2.0.5): on the
 # device the companion loader copies it there before entering the OS.
@@ -56,7 +56,7 @@ export DISP_ALPHA=1 \
        SM1_IRQ=1 SM1_SYNC=1 SM1_DECODE=1 \
        HLE_AUDIO_DATAPATH=1 HLE_AUDIO_DISK="$DISK" \
        AUDIOPACE=1 AUDIOLIVE=1 AUDIOGAIN="${AUDIOGAIN-20}"
-case $(uname) in Darwin) audio=coreaudio;; *) audio=pa;; esac
+case $(uname) in Darwin) audio=sdl;; *) audio=pa;; esac
 
 exec ./build/qemu-system-arm \
     -M "iPod-Classic,sysinfo=$A/sysinfo.bin" \

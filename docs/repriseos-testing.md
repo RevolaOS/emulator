@@ -1,7 +1,7 @@
 # RepriseOS UI testing
 
 Use the complete configuration in [AGENTS.md](../AGENTS.md) and
-[Running the music player](../README.md#running-the-music-player), including
+[Playback configurations](../README.md#playback-configurations), including
 `PMUCHARGER=adapter` and `DISP_ALPHA=1`. A launcher that boots without these
 settings is not the established feature-test setup.
 
@@ -67,8 +67,8 @@ the Language screen.
 
 ## Limits
 
-These settings include hardware and audio workarounds. `IRAMSPILL` is a measurement
-aid, and host-assisted audio is not proof of hardware playback behavior. Do not
+These settings include hardware and audio workarounds, and host-assisted audio
+is not proof of hardware playback behavior. Do not
 use `HLE_NP_OVERLAY` to validate firmware UI. UI screenshots establish rendering
 and navigation only; audio, timing, memory and physical-device acceptance require
 separate checks. See [the playback investigation](../wiki/20-classic6g-player.md).

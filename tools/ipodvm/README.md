@@ -91,7 +91,9 @@ before checking input, navigation or audio. The value survives a guest reset; `s
 reports it.
 
 `launch` opens an SDL window showing the live screen; it also accepts keys
-typed into it. Paused guests show their last frame. The title (also shown by
+typed into it, and plays the guest's audio through the host's output
+(`AUDIOLIVE=1`, `AUDIOGAIN=20`). Headless VMs are silent and only record
+`audio.wav`. Paused guests show their last frame. The title (also shown by
 `list` and `status`) names the VM, the repository and branch it was launched
 from, and the Claude Code session ID prefix when there is one; override it
 with `--title`. `--headless` runs without a window.
