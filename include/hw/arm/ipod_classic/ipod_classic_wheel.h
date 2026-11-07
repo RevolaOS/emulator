@@ -303,6 +303,7 @@ struct IPodClassicWheelState {
 
     MemoryRegion iomem;
     qemu_irq irq;
+    qemu_irq wake;      /* named GPIO "wake": low while a key is down */
 
     /* Registers that read back what was written. */
     uint32_t con;

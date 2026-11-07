@@ -510,6 +510,8 @@ static void wheel_key_event(void *opaque, int keycode)
      */
     ipod_classic_np_overlay_key(keycode);
 
+    qemu_set_irq(s->wake, released);
+
     switch (keycode & 0x7f) {
     case KEY_ENTER: bit = S5L8702_WHEEL_BTN_SELECT; break;
     case KEY_W:     bit = S5L8702_WHEEL_BTN_MENU;   break;
@@ -702,6 +704,7 @@ static void ipod_classic_wheel_realize(DeviceState *dev, Error **errp)
                           TYPE_IPOD_CLASSIC_WHEEL, S5L8702_WHEEL_MEM_SIZE);
     sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->iomem);
     sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->irq);
+    qdev_init_gpio_out_named(dev, &s->wake, "wake", 1);
 
     /*
      * The firmware delivers the FIRST movement of a gesture only if it is

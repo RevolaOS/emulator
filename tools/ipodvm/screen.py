@@ -13,8 +13,8 @@ from pathlib import Path
 import subprocess
 import time
 
-from core import (QEMU_ROOT, QMP, Failure, digest, is_blank, log, press, press_verified,
-                  run_dir, sleep_warning)
+from core import (QEMU_ROOT, QMP, Failure, asleep, digest, is_blank, log, press,
+                  press_verified, run_dir)
 
 OCR_SOURCE = Path(__file__).resolve().parent / 'screentext.swift'
 OCR = QEMU_ROOT / 'build/ipodvm/screentext'
@@ -194,8 +194,8 @@ def screen(name):
     run = run_dir(name)
     with QMP(run) as qmp:
         data = read_with(qmp)
-        if data['state'] in ('blank', 'other'):
-            data['warning'] = sleep_warning(qmp.registers())
+        if asleep(qmp.registers()):
+            data['asleep'] = True
     return public(data)
 
 
@@ -236,8 +236,6 @@ def wake(qmp, data, steps):
         press(qmp, ['w'])
         steps.append('woke from the Charging screen')
         data = read_with(qmp, 'wake')
-    if data['state'] in ('blank', 'other') and sleep_warning(qmp.registers()):
-        raise Failure(sleep_warning(qmp.registers()))
     return data
 
 
@@ -323,7 +321,7 @@ def to_root(qmp, data, steps):
         data = read_with(qmp, 'menu')
         steps.append(f'menu: {before!r} -> {data["title"]!r}')
         if data['title'] == before:
-            qmp.run_for(10)       # slow screens: let the press take effect
+            time.sleep(10)        # slow screens: let the press take effect
             data = read_with(qmp, 'menu')
     raise Failure(f'could not reach the main menu; stuck at {data["title"]!r}')
 

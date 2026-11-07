@@ -26,6 +26,8 @@ KEYS = {'type': 'array', 'items': {'type': 'string'},
 REGION = {'type': 'array', 'items': {'type': 'integer'}, 'minItems': 4, 'maxItems': 4,
           'description': 'compare only [x, y, w, h], e.g. the title bar [0, 0, 150, 20]'}
 IMAGE = {'type': 'boolean', 'description': 'also return the screenshot image'}
+PAUSE = {'type': 'boolean', 'description': 'pause the guest afterwards (default: leave it '
+         'running)'}
 
 
 def tool(name, description, properties=None, required=()):
@@ -37,8 +39,9 @@ def tool(name, description, properties=None, required=()):
 TOOLS = [
     tool('vm_launch',
          'Boot a RepriseOS CFW image with the complete feature-test configuration and '
-         'return once the first screen is stable (VM left paused). Takes 45-75 s. Opens '
-         'a live window unless headless.',
+         'return once the first screen is stable (VM left running). Takes 45-75 s. Opens '
+         'a live window unless headless. The firmware enters standby after about two '
+         'minutes idle only on battery or USB power; any key wakes it.',
          {'firmware': {'type': 'string', 'description': 'path to osos-cfw.bin'},
           'disk': {'type': 'string', 'description': 'test disk image (cloned, never modified)'},
           'repo': {'type': 'string', 'description': 'firmware repository (for '
@@ -46,7 +49,12 @@ TOOLS = [
           'name': NAME, 'headless': {'type': 'boolean'},
           'title': {'type': 'string', 'description': 'window title override'},
           'layout': {'type': 'string', 'description': 'payload/native/layout.h override'},
-          'keep_running': {'type': 'boolean', 'description': 'do not pause after boot'},
+          'pause': {'type': 'boolean', 'description': 'pause after boot'},
+          'power': {'type': 'string', 'enum': ['adapter', 'usb', 'battery'],
+                    'description': 'external power the PMU reports (default adapter: '
+                    'idles on the Charging screen and never enters standby)'},
+          'persist': {'type': 'boolean', 'description': 'write guest disk changes to the '
+                      'run\'s disk clone (no -snapshot); the result reports its path'},
           'elf': {'type': 'string', 'description': 'payload.elf matching firmware, for profiling'},
           'profile': {'type': 'array', 'items': {'type': 'string'},
                       'description': 'payload function globs to profile ([] = all); needs elf'},
@@ -68,14 +76,16 @@ TOOLS = [
           'themes': {'type': 'string'}, 'keep_themes': {'type': 'boolean'}},
          ['base', 'out']),
     tool('vm_list', 'List VMs under /tmp/ipodvm with their window titles (owner session).'),
-    tool('vm_status', 'Run state, PC/LR and idle-sleep detection.', {'name': NAME}),
+    tool('vm_status', 'Run state, PC/LR, whether the firmware is in standby (asleep), '
+         'power and persist settings.', {'name': NAME}),
     tool('vm_quit', 'Stop a VM.', {'name': NAME}),
     tool('vm_run', 'Resume the guest, for `seconds` then pause if given (slow screens and '
          'disk loads need real guest time; a paused guest gets none).',
          {'name': NAME, 'seconds': {'type': 'number'}}),
     tool('vm_pause', 'Pause the guest.', {'name': NAME}),
     tool('screen', 'Read the screen as JSON: title, rows (label, value, detail, submenu), '
-         'selected row, preview pane text, state (list/other/charging/blank).',
+         'selected row, preview pane text, state (list/other/charging/blank); asleep '
+         'when the firmware is in standby (the last frame stays on screen).',
          {'name': NAME, 'image': IMAGE}),
     tool('goto', 'Navigate by row labels, e.g. "Settings/Theme": returns to the main menu '
          '(passing Language and the Charging screen), scrolls to each row, selects it. '
@@ -84,17 +94,18 @@ TOOLS = [
           'from_root': {'type': 'boolean', 'description': 'default true; false starts here'},
           'image': IMAGE},
          ['path']),
-    tool('press', 'Resume, send keys with settle waits, pause. Reports whether the frame '
-         'changed. Prefer select/menu for buttons and goto for navigation.',
-         {'name': NAME, 'keys': KEYS, 'image': IMAGE}, ['keys']),
+    tool('press', 'Resume and send keys with settle waits. Reports whether the frame '
+         'changed and woke=true if the guest was in standby (the waking key is also '
+         'delivered). Prefer select/menu for buttons and goto for navigation.',
+         {'name': NAME, 'keys': KEYS, 'image': IMAGE, 'pause': PAUSE}, ['keys']),
     tool('select', 'Press Select and verify the screen changed, retrying safely if dropped.',
-         {'name': NAME, 'region': REGION, 'image': IMAGE}),
+         {'name': NAME, 'region': REGION, 'image': IMAGE, 'pause': PAUSE}),
     tool('menu', 'Press Menu and verify the screen changed, retrying safely if dropped.',
-         {'name': NAME, 'region': REGION, 'image': IMAGE}),
+         {'name': NAME, 'region': REGION, 'image': IMAGE, 'pause': PAUSE}),
     tool('screenshot', 'Return the current screen as an image.', {'name': NAME}),
     tool('wait', 'Run the guest until the screen changes or two polls match.',
          {'name': NAME, 'until': {'type': 'string', 'enum': ['change', 'stable']},
-          'timeout': {'type': 'number'}, 'image': IMAGE}),
+          'timeout': {'type': 'number'}, 'image': IMAGE, 'pause': PAUSE}),
     tool('profile_keys', 'Reset the profiler, send keys, dump: per-function calls and guest '
          'instruction counts and, with heap hooks, the heap allocated, held and leaked by '
          'that input (VM must be launched with profiling).',
@@ -129,11 +140,12 @@ def call(name, a):
             return str(repo / a[key]) if a.get(key) else None
         return core.launch(vm, path('firmware'), path('disk'), layout=path('layout'),
                            title=a.get('title'), headless=a.get('headless', False),
-                           keep_running=a.get('keep_running', False), elf=path('elf'),
+                           pause=a.get('pause', False), elf=path('elf'),
                            profile=a.get('profile'), fns=a.get('fn'),
                            trace=a.get('trace', False), timeline=a.get('timeline'),
                            signpost=a.get('signpost', False), heap=a.get('heap'),
-                           symbols=path('symbols'), cwd=str(repo))
+                           symbols=path('symbols'), cwd=str(repo),
+                           power=a.get('power', 'adapter'), persist=a.get('persist', False))
     if name == 'disk_prepare':
         return core.prepare_disk(a['base'], a['out'], a.get('themes'),
                                  not a.get('keep_themes', False))
@@ -152,14 +164,15 @@ def call(name, a):
     if name == 'goto':
         return screen.goto(vm, a['path'], a.get('from_root', True))
     if name == 'press':
-        return core.key(vm, a['keys'])
+        return core.key(vm, a['keys'], a.get('pause', False))
     if name in ('select', 'menu'):
         region = tuple(a['region']) if a.get('region') else None
-        return core.button(vm, name, region)
+        return core.button(vm, name, region, pause=a.get('pause', False))
     if name == 'screenshot':
         return core.screenshot(vm)
     if name == 'wait':
-        return core.wait(vm, a.get('until', 'stable'), a.get('timeout', 60))
+        return core.wait(vm, a.get('until', 'stable'), a.get('timeout', 60),
+                         pause=a.get('pause', False))
     if name == 'profile_keys':
         return trim_profile(core.profile_keys(vm, a['keys'], a.get('settle', 0)), a.get('top'))
     if name == 'profile_dump':

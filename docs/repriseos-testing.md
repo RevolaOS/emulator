@@ -20,8 +20,9 @@ settings is not the established feature-test setup.
 ## Drive the UI
 
 [`tools/ipodvm`](../tools/ipodvm/README.md) implements the steps below:
-`launch` waits for the first stable screen, `key` resumes, sends, waits and
-pauses, and `select`/`menu` verify the frame changed before a guarded retry.
+`launch` waits for the first stable screen, `key` resumes, sends and waits,
+and `select`/`menu` verify the frame changed before a guarded retry. ipodvm
+leaves the guest running; pass `--pause` to stop it after a command.
 
 1. Let the VM run until a screenshot shows Language or the main menu. Startup
    can take roughly 60 seconds; a black frame at 20 or 30 seconds is not failure.
@@ -55,9 +56,10 @@ the Language screen.
 
 - A paused guest gets no run time. Slow screens (Settings, artwork loads) need
   20–30 s of running guest time (`ipodvm wait` or `ipodvm run N`).
-- The idle Charging screen wakes on any key. After about two minutes of idle
-  guest time the firmware sleeps and ignores input; `ipodvm status` reports it
-  (PC in the IRAM sleep loop, LR = 0). Relaunch the VM.
+- The idle Charging screen wakes on any key. On USB or battery power
+  (`ipodvm launch --power usb|battery`) the firmware enters standby after
+  about two minutes idle; `ipodvm status` reports `asleep`, and any key wakes
+  it.
 - Theme packs built for another catalog are rejected and the Theme menu is
   hidden. Build the disk with packs from the same firmware build
   (`ipodvm disk`).

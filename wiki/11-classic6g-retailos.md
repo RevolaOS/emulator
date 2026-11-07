@@ -601,7 +601,8 @@ buenos, y hacían falta los dos: ver §13 y §14.**
 2. GPIO de verdad: hoy devuelve cero a todo. `PDAT(11)` bit 1 = 0 elige ATA
    paralelo, que es lo que queremos, pero `PDAT(6)` (tipo de panel) y
    `PDAT(10)` (auriculares) también leen cero y puede que no deban.
-3. El EIC (`0x39A00000`), que se programa y nunca dispara.
+3. ~~El EIC (`0x39A00000`), que se programa y nunca dispara.~~ Modelled in
+   `ipod_classic_eic.c`: the standby path waits on `ALVCON` and wakes through it.
 4. ~~DMAC0 (PL080), que se programa con descriptores en DRAM y nunca completa.~~
    **RESUELTO (§14), y era la causa del bloqueo con disco.** Esta línea estaba
    escrita desde el principio y en el último lugar de la lista; el coste de

@@ -617,7 +617,8 @@ La rutina de reloj/energía `0x22002dc0` (`iPodPowerProfile.txt`) reprograma un 
 0 → spin eterno. **`pctrace pc=0x22002dc0`/`pc=0x22002e20` en un play limpio (sin
 gdb): hits=0.** La rutina NUNCA se entra durante la reproducción. El spin que
 capturó la sesión anterior era 100% artefacto del ciclado de gdb (un IRQ perdido en
-un detach deja la rutina de reloj a medias). **No modelar EIC.** El estado estable
+un detach deja la rutina de reloj a medias). The EIC is not part of the playback path (it is modelled for standby; see
+`ipod_classic_eic.c`). El estado estable
 limpio es WFI idle en `0x22003b0c–0x22003b30`, cpsr con IRQs HABILITADAS.
 
 **B) El muro NO es un periférico que falte ni uno que devuelva mal — DESCARTADO.**

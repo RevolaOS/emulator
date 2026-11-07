@@ -42,9 +42,15 @@ KEY_NAMES = {'select': 'ret', 'menu': 'w', 'up': 'q', 'down': 'e',
              'prev': 'a', 'next': 'd', 'play': 's'}
 VALID_KEYS = set(KEY_NAMES) | set(KEY_NAMES.values())
 
-# Firmware sleep spins in IRAM polling a bit QEMU never sets; LR reads 0 there.
-# 0x22003b70 is the normal idle loop and is not sleep.
-IDLE_LOOP = 0x22003b70
+# Firmware 2.0.5 standby: after about two minutes idle on battery or USB power
+# 0x22002dcc gates the clocks and halts in WFI at 0x22002e70 (QEMU reports the
+# PC after it). Any key wakes it.
+STANDBY_WFI = range(0x22002e6c, 0x22002e78)
+
+# --power: what the PMU reports as external power (PMUCHARGER). The firmware
+# only enters standby without the wall adapter; on the adapter it idles on
+# the Charging screen instead.
+POWER = {'adapter': 'adapter', 'usb': 'usb', 'battery': None}
 
 
 class Failure(Exception):
@@ -444,10 +450,11 @@ def prepare_disk(base, out, themes=None, clean=True):
 
 # ---- lifecycle -------------------------------------------------------------
 
-def launch(name, firmware, disk, layout=None, title=None, headless=False, keep_running=False,
+def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=False,
            wait=True, boot_timeout=180, elf=None, profile=None, fns=None, trace=False,
-           timeline=None, signpost=False, heap=None, symbols=None, cwd=None):
-    """Start a VM; with `wait`, return once the first screen is stable (paused)."""
+           timeline=None, signpost=False, heap=None, symbols=None, cwd=None,
+           power='adapter', persist=False):
+    """Start a VM; with `wait`, return once the first screen is stable."""
     cwd = Path(cwd or Path.cwd())
     firmware = Path(firmware).expanduser().resolve()
     disk = Path(disk).expanduser().resolve()
@@ -459,6 +466,8 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, keep_r
                       'repository or pass a layout path')
     if profile is not None and not elf:
         raise Failure('profiling payload functions needs the matching payload.elf')
+    if power not in POWER:
+        raise Failure(f'unknown power {power!r}; use {sorted(POWER)}')
     base, file_offset = parse_layout(layout)
     if not QEMU.exists():
         raise Failure(f'{QEMU} missing; build QEMU first (see README.md)')
@@ -474,17 +483,22 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, keep_r
     image = firmware.read_bytes()
     (run / 'body.bin').write_bytes(image[IMG1_HEADER:])
     (run / 'payload.bin').write_bytes(image[file_offset:])
-    # APFS clone: instant, and -snapshot keeps guest writes off it anyway.
+    # APFS clone: instant, and --disk is never written. Without `persist`,
+    # -snapshot keeps guest writes off the clone too.
     subprocess.run(['cp', '-c', str(disk), str(run / 'disk.img')], check=True)
 
     environment = dict(ENVIRONMENT, HLE_AUDIO_DISK=str(run / 'disk.img'),
                        AUDIOWAV=str(run / 'audio.wav'))
+    environment.pop('PMUCHARGER', None)
+    if POWER[power]:
+        environment['PMUCHARGER'] = POWER[power]
     title = title or owner_label(name, cwd)
     # QEMU option values escape a comma by doubling it.
     command = [str(QEMU), '-name', title.replace(',', ',,'), '-M', 'iPod-Classic',
                '-kernel', str(run / 'body.bin'),
                '-device', f'loader,file={run / "payload.bin"},addr={base:#010x},force-raw=on',
-               '-drive', f'if=ide,format=raw,file={run / "disk.img"}', '-snapshot',
+               '-drive', f'if=ide,format=raw,file={run / "disk.img"}',
+               *([] if persist else ['-snapshot']),
                '-serial', 'null', '-monitor', 'none',
                '-qmp', f'unix:{run / "qmp.sock"},server=on,wait=off',
                '-gdb', f'unix:{run / "gdb.sock"},server=on,wait=off',
@@ -526,7 +540,8 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, keep_r
 
     record = {'title': title, 'command': command, 'environment': environment,
               'firmware': {'path': str(firmware), 'sha256': hashlib.sha256(image).hexdigest()},
-              'disk': str(disk), 'layout': str(layout.resolve()), 'profile': profiling}
+              'disk': str(disk), 'layout': str(layout.resolve()), 'profile': profiling,
+              'power': power, 'persist': persist}
     (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
 
     with (run / 'qemu.log').open('w') as output:
@@ -546,7 +561,8 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, keep_r
         time.sleep(0.2)
     time.sleep(0.3)
     result = {'name': name, 'pid': process.pid, 'run': str(run), 'title': title,
-              'profile': profiling}
+              'profile': profiling, 'power': power,
+              'disk': str(run / 'disk.img') if persist else None}
     if not wait:
         result['state'] = 'booting'
         return result
@@ -564,9 +580,9 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, keep_r
             if time.time() - started > boot_timeout:
                 raise Failure(f'no stable screen after {boot_timeout} s; '
                               f'take a screenshot and check {run / "qemu.log"}')
-        if not keep_running:
+        if pause:
             qmp.stop()
-        result.update(state='running' if keep_running else 'paused',
+        result.update(state='paused' if pause else 'running',
                       boot_seconds=round(time.time() - started), shot=str(qmp.shot('boot')))
     return result
 
@@ -577,11 +593,11 @@ def status(name):
     with QMP(run) as qmp:
         state = qmp.execute('query-status')['status']
         regs = qmp.registers()
-        warning = sleep_warning(regs)
-    return {'name': name, 'state': state, 'pid': vm_pid(run), 'pc': f'{regs["pc"]:#010x}',
-            'lr': f'{regs["lr"]:#010x}', 'title': record.get('title', ''),
-            'firmware': record['firmware'], 'profile': record.get('profile'),
-            'warning': warning, 'run': str(run)}
+    return {'name': name, 'state': state, 'asleep': asleep(regs), 'pid': vm_pid(run),
+            'pc': f'{regs["pc"]:#010x}', 'lr': f'{regs["lr"]:#010x}',
+            'title': record.get('title', ''), 'firmware': record['firmware'],
+            'profile': record.get('profile'), 'power': record.get('power', 'adapter'),
+            'persist': record.get('persist', False), 'run': str(run)}
 
 
 def list_vms():
@@ -643,41 +659,34 @@ def screenshot(name, output=None):
 
 # ---- input -----------------------------------------------------------------
 
-def sleep_warning(regs):
-    pc, lr = regs.get('pc', 0), regs.get('lr', 1)
-    if 0x22000000 <= pc < 0x22010000 and lr == 0 and pc != IDLE_LOOP:
-        return (f'guest looks asleep (PC={pc:#010x}, LR=0): idle sleep ignores input; '
-                f'relaunch the VM')
-    return None
+def asleep(regs):
+    return regs.get('pc', 0) in STANDBY_WFI
 
 
-def press(qmp, keys, keep_running=False):
-    """Resume, send each key with its settle wait, then pause."""
+def press(qmp, keys, pause=False):
+    """Resume, send each key with its settle wait; pause afterwards if asked."""
     keys = [KEY_NAMES.get(k, k) for k in keys]
     unknown = [k for k in keys if k not in VALID_KEYS]
     if unknown:
         raise Failure(f'unknown keys {unknown}; use {sorted(VALID_KEYS)}')
     qmp.cont()
-    try:
-        for key in keys:
-            qmp.hmp(f'sendkey {key} 200')
-            time.sleep(WHEEL_WAIT if key in WHEEL_KEYS else BUTTON_WAIT)
-    except BaseException:
-        qmp.stop()      # never leave the guest running into idle sleep
-        raise
-    if not keep_running:
+    for key in keys:
+        qmp.hmp(f'sendkey {key} 200')
+        time.sleep(WHEEL_WAIT if key in WHEEL_KEYS else BUTTON_WAIT)
+    if pause:
         qmp.stop()
 
 
-def key(name, keys, keep_running=False):
+def key(name, keys, pause=False):
     run = run_dir(name)
     with QMP(run) as qmp:
         before = digest(qmp.frame())
-        press(qmp, keys, keep_running)
+        woke = asleep(qmp.registers())
+        press(qmp, keys, pause)
         changed = digest(qmp.frame()) != before
         result = {'shot': str(qmp.shot('-'.join(keys))), 'changed': changed}
-        if not changed:
-            result['warning'] = sleep_warning(qmp.registers())
+        if woke:
+            result['woke'] = True
     return result
 
 
@@ -695,12 +704,9 @@ def press_verified(qmp, which, region=None, attempts=3, settle=25.0, touch=('q',
         press(qmp, [key_name])
         if digest(qmp.frame(), region) != before:
             return attempt
-        qmp.run_for(settle)
+        time.sleep(settle)
         if digest(qmp.frame(), region) != before:
             return attempt
-        warning = sleep_warning(qmp.registers())
-        if warning:
-            raise Failure(warning)
         if attempt == attempts:
             raise Failure(f'{which}: screen unchanged after {attempt} attempts; '
                           f'{qmp.shot(which + "-dropped")}')
@@ -713,14 +719,16 @@ def press_verified(qmp, which, region=None, attempts=3, settle=25.0, touch=('q',
     return attempts
 
 
-def button(name, which, region=None, attempts=3, settle=25.0):
+def button(name, which, region=None, attempts=3, settle=25.0, pause=False):
     run = run_dir(name)
     with QMP(run) as qmp:
         attempt = press_verified(qmp, which, region, attempts, settle)
+        if pause:
+            qmp.stop()
         return {'shot': str(qmp.shot(which)), 'attempts': attempt}
 
 
-def wait(name, until='stable', timeout=60.0, interval=2.0, region=None, keep_running=False):
+def wait(name, until='stable', timeout=60.0, interval=2.0, region=None, pause=False):
     """Run the guest until the frame differs from the start, or two polls match."""
     run = run_dir(name)
     with QMP(run) as qmp:
@@ -739,7 +747,7 @@ def wait(name, until='stable', timeout=60.0, interval=2.0, region=None, keep_run
             else:
                 raise Failure(f'screen did not {until} within {timeout} s')
         finally:
-            if not keep_running:
+            if pause:
                 qmp.stop()
         return {'shot': str(qmp.shot(f'wait-{until}')),
                 'seconds': round(time.time() - started, 1)}
@@ -893,13 +901,10 @@ def profile_keys(name, keys, settle=0.0, output=None):
     run = run_dir(name)
     with QMP(run) as qmp:
         profile_send(run, 'reset', 'start')
-        try:
-            press(qmp, keys, keep_running=True)
-            if settle:
-                time.sleep(settle)
-            data = profile_dump_with(run, qmp, output or default_profile_path(run))
-        finally:
-            qmp.stop()
+        press(qmp, keys)
+        if settle:
+            time.sleep(settle)
+        data = profile_dump_with(run, qmp, output or default_profile_path(run))
         data['shot'] = str(qmp.shot('profile-' + '-'.join(keys)))
     return data
 
@@ -919,7 +924,7 @@ def instruments(name, template='Time Profiler', seconds=None, keys=(), open_trac
         with QMP(run) as qmp:
             if keys:
                 time.sleep(3)            # let xctrace attach
-                press(qmp, keys, keep_running=True)
+                press(qmp, keys)
             else:
                 qmp.cont()
             try:
@@ -927,8 +932,6 @@ def instruments(name, template='Time Profiler', seconds=None, keys=(), open_trac
             except KeyboardInterrupt:
                 recorder.send_signal(2)
                 recorder.wait()
-            finally:
-                qmp.stop()
     finally:
         if recorder.poll() is None:
             recorder.terminate()

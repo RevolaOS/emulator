@@ -171,6 +171,7 @@ una dirección sin mapear no es un cero inofensivo, es un *data abort*.
 | DMAC0 / DMAC1 | `0x38200000` / `0x39900000` | `hw/dma/pl080.c` (de serie) | IRQ 16 y 17, **memoria del sistema como puerto maestro** porque el huésped programa los canales con el alias cacheado mientras la CPU corre sobre el no cacheado. Ventana de 4 KB, para que el resto siga cayendo al suelo de E/S |
 | Click wheel | `0x3C200000` | `ipod_classic_wheel.c` | IRQ 23, los dos formatos de paquete, cinco botones y la rueda por teclado, con el ritmo que exige el decodificador del firmware. Ventana de 4 KB |
 | GPIO | `0x3CF00000` | `ipod_classic_gpio.c` | **Un pin modelado**, el 86, que la tarea de almacenamiento traduce a «hay disco». Los demás leen cero |
+| EIC / SYSALV | `0x39A00000` | `ipod_classic_eic.c` | `ALVCON` as a plain register (standby writes it and waits to read it back), and the seven `INTLEVEL`/`INTSTAT`/`INTEN`/`INTTYPE` groups driving VIC 0–3 and 31–33. **One pin has a source**: GPIO 4, which the wheel pulls low on a key press and which wakes the firmware from standby. `0x7b` (the PMU interrupt) has no source because the PMU model has no interrupt output. Pins without a source never set `INTSTAT` |
 | Generador | `0x3C100000` | `ipod_classic.c` | LCG sembrado por el huésped. Identidad `INFERIDA`, contrato de tres registros verificado, y **sin bit de habilitación** — condicionar el «dato listo» cuelga el arranque |
 | UART0 | `0x3CC00000` | `hw/char/exynos4210_uart.c` (de serie) | IRQ 24 |
 | Bloque de parámetros del bootrom | `0x2203FF00` | `ipod_classic.c` | Los **tres** campos que el arranque lee: id de hardware (`19`, o el firmware se reinicia a `"softupdt"`), base y tamaño de DRAM. Los otros ocho quedan a cero a propósito |
@@ -178,8 +179,7 @@ una dirección sin mapear no es un cero inofensivo, es un *data abort*.
 
 **Lo que no está**: audio (I²S y CS42L55), USB (OTG, host, function y PHY), NAND
 (FMC/ECC), CE-ATA sobre SDCI, el DSP CalmADM2E, el RTC, el ADC, el SPI y su NOR,
-el motor AES y el SHA-1 del propio SoC, el controlador de interrupciones
-externas (EIC, que el firmware programa y que nunca dispara), y la bootrom.
+el motor AES y el SHA-1 del propio SoC, y la bootrom.
 
 ## Diferencias respecto al S5L8720 (iPod Touch 2G)
 

@@ -438,7 +438,7 @@ ipod_classic_unimplemented[] = {
     { "s5l8702.adm-sfr",  ADM_SFR_MEM_BASE,  0x100000 },
     { "s5l8702.lcd-win",  LCD_WIN_MEM_BASE,  0x100000 },
     { "s5l8702.fmc",      FMC_MEM_BASE,      0x100000 },
-    { "s5l8702.eic",      EIC_MEM_BASE,      0x100000 },
+    /* s5l8702.eic (0x39A00000) is a real device now; see the machine init. */
     { "s5l8702.int",      INT_MEM_BASE,      0x100000 },
     { "s5l8702.ecc",      ECC_MEM_BASE,      0x100000 },
     /* The click wheel is a real device now; see the machine init. */
@@ -805,6 +805,21 @@ static void ipod_classic_machine_init(MachineState *machine)
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, GPIO_MEM_BASE);
 
     /*
+     * The external interrupt controller and system-alive block at 0x39A00000.
+     * The standby path spins on ALVCON and wakes through these groups; see
+     * ipod_classic_eic.c. Group g drives VIC source 6 - g for groups 6..3 and
+     * 33 - g for groups 2..0.
+     */
+    dev = qdev_new(TYPE_IPOD_CLASSIC_EIC);
+    nms->eic = IPOD_CLASSIC_EIC(dev);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, EIC_MEM_BASE);
+    for (int g = 0; g < S5L8702_EIC_GROUPS; g++) {
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), g,
+                           s5l8702_get_irq(nms, g >= 3 ? 6 - g : 33 - g));
+    }
+
+    /*
      * The click wheel at 0x3C200000, and with it the keyboard. This is what
      * makes the user interface usable rather than merely visible.
      *
@@ -831,6 +846,17 @@ static void ipod_classic_machine_init(MachineState *machine)
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, WHEEL_MEM_BASE);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
                        s5l8702_get_irq(nms, S5L8702_WHEEL_IRQ));
+
+    /*
+     * Key presses also wake the SoC from standby, through EIC GPIO 4: the
+     * firmware arms that pin and the PMU interrupt (GPIO 0x7b) before it
+     * sleeps. Waking through GPIO 4 resumes the user interface as it was;
+     * waking through the PMU line makes the firmware treat it as a hold-switch
+     * event and show the lock icon, so the wheel drives GPIO 4.
+     */
+    qdev_connect_gpio_out_named(dev, "wake", 0,
+                                ipod_classic_eic_pin(nms->eic,
+                                                     S5L8702_EIC_GPIO_WAKE));
 
     /*
      * The I2S transmitter at 0x3CA00000, the audio data path. It was

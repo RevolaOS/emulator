@@ -42,15 +42,22 @@ Each VM lives in `/tmp/ipodvm/<name>/` (default name `vm`, select with `-n`).
 The short path keeps `qmp.sock` and `gdb.sock` under macOS's 104-byte Unix
 socket limit. The directory holds `launch.json` (command, environment,
 firmware SHA-256, disk, layout), `qemu.log`, `audio.wav`, `shots/` and
-profiler output. The disk is an APFS clone of `--disk`, and QEMU runs with
-`-snapshot`, so neither image is written. Launching a name again replaces its
-stopped run directory, including screenshots and profiles.
+profiler output. The disk is an APFS clone of `--disk`, so `--disk` is never
+written, and QEMU runs with `-snapshot`, so the clone is not written either.
+`--persist` drops `-snapshot`: guest writes then reach the run's `disk.img`,
+which can be inspected with mtools after `quit`. Launching a name again
+replaces its stopped run directory, including screenshots, profiles and the
+disk clone.
 
 Run `launch` from the firmware repository (or pass `--layout`): the payload
 offset and load address come from its `payload/native/layout.h`. `launch`
 returns once the screen has been non-black and unchanged across two polls
-5 s apart (normally Language or the main menu, 45–75 s after start) and leaves the guest paused (`--run` keeps
-it running, `--no-wait` returns immediately).
+5 s apart (normally Language or the main menu, 45–75 s after start) and leaves
+the guest running (`--pause` pauses it, `--no-wait` returns immediately).
+
+`--power` sets the external power the PMU reports: `adapter` (default),
+`usb` or `battery`. On the adapter the firmware idles on the Charging screen;
+on USB or battery it enters standby after about two minutes idle.
 
 `launch` opens an SDL window showing the live screen; it also accepts keys
 typed into it. Paused guests show their last frame. The title (also shown by
@@ -94,12 +101,12 @@ change.
 
 | Command | Behaviour |
 | --- | --- |
-| `key KEYS…` | resume, send each key (3 s settle after wheel keys, 5 s after buttons), pause, screenshot; reports whether the frame changed |
+| `key KEYS…` | resume, send each key (3 s settle after wheel keys, 5 s after buttons), screenshot; reports whether the frame changed and `woke` if the guest was in standby |
 | `select`, `menu` | press and verify the frame changed; if not, run the guest `--settle` s (default 25) more, then wheel-touch and retry only if the touch left the frame unchanged |
 | `wait --until change\|stable` | run the guest until the frame differs from the start, or two polls match |
 | `run [N]`, `pause` | resume (for N seconds, then pause) or pause |
 | `shot [FILE]` | screenshot (default: next file in `shots/`) |
-| `status` | run state, PC/LR, title, firmware, profiler |
+| `status` | run state, standby, PC/LR, title, firmware, profiler, power |
 | `hmp LINE…` | raw HMP command, e.g. `hmp info registers` |
 | `list`, `quit` | list VMs under `/tmp/ipodvm`; stop one |
 
@@ -113,10 +120,13 @@ title bar (`--region 0,0,150,20`). The wheel touch (`q e`, or `e q` on the
 top row in `goto`) can move the selection at a list edge; the press then
 stops and reports instead of retrying.
 
-The firmware sleeps after about two minutes of idle guest time and then
-ignores input. Commands report this when the PC is in the IRAM sleep loop
-with LR = 0; relaunch the VM. A paused guest gets no run time: work that
-needs time (artwork loads, Settings) needs `run N` or `wait`.
+`key`, `select`, `menu` and `wait` leave the guest running; `--pause` pauses
+it afterwards. A paused guest gets no run time: work that needs time (artwork
+loads, Settings) needs `run N` or `wait`.
+
+In standby the firmware has gated its clocks and halted the CPU; the screen
+keeps its last frame and `screen` and `status` report `asleep`. Any key wakes
+it, and that key is also delivered to the user interface.
 
 ## MCP server
 

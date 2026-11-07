@@ -35,8 +35,8 @@ def show_screen(data):
         print('  ' + ' | '.join(data['text']))
     if data.get('preview'):
         print(f'  preview: {" | ".join(data["preview"])}')
-    if data.get('warning'):
-        print(f'  warning: {data["warning"]}')
+    if data.get('asleep'):
+        print('  asleep: the firmware is in standby; any key wakes it')
     print(f'  shot: {data["shot"]}')
 
 
@@ -122,14 +122,15 @@ def show(command, data, args):
     elif command == 'hmp':
         print(data, end='')
     elif command == 'status':
-        print(f'{data["name"]}: {data["state"]}  pid {data["pid"]}  PC={data["pc"]} LR={data["lr"]}')
+        print(f'{data["name"]}: {data["state"]}{" (asleep)" if data["asleep"] else ""}  '
+              f'pid {data["pid"]}  PC={data["pc"]} LR={data["lr"]}')
         print(f'  title    {data["title"]}')
         print(f'  firmware {data["firmware"]["path"]} ({data["firmware"]["sha256"][:12]})')
         if data.get('profile'):
             print(f'  profiling {data["profile"]["functions"]} functions, '
                   f'{data["profile"].get("heap_hooks", 0)} heap hooks')
-        if data.get('warning'):
-            print(f'  warning: {data["warning"]}')
+        print(f'  power    {data["power"]}'
+              + ('  persist (guest writes reach the run\'s disk.img)' if data['persist'] else ''))
     else:
         for key, value in data.items():
             if value is not None:
@@ -156,7 +157,12 @@ def main():
     p.add_argument('--title', help='window title (default: name · repo (branch) · session)')
     p.add_argument('--headless', action='store_true',
                    help='no window (default: SDL window that also accepts keys)')
-    p.add_argument('--run', action='store_true', help='keep running after boot instead of pausing')
+    p.add_argument('--pause', action='store_true', help='pause after boot')
+    p.add_argument('--power', choices=sorted(core.POWER), default='adapter',
+                   help='external power the PMU reports (default adapter: idles on the '
+                        'Charging screen and never enters standby)')
+    p.add_argument('--persist', action='store_true',
+                   help='write guest disk changes to the run\'s disk clone (no -snapshot)')
     p.add_argument('--no-wait', action='store_true', help='return without waiting for boot')
     p.add_argument('--boot-timeout', type=int, default=180)
     p.add_argument('--elf', help='payload.elf matching --firmware, for --profile')
@@ -173,9 +179,9 @@ def main():
     p.add_argument('--symbols', metavar='FUNCTIONS_JSONL',
                    help='Ghidra functions.jsonl for naming stock-firmware allocation sites')
     p.set_defaults(func=lambda a: core.launch(
-        a.name, a.firmware, a.disk, a.layout, a.title, a.headless, a.run, not a.no_wait,
+        a.name, a.firmware, a.disk, a.layout, a.title, a.headless, a.pause, not a.no_wait,
         a.boot_timeout, a.elf, a.profile, a.fn, a.trace, a.timeline, a.signpost, a.heap,
-        a.symbols))
+        a.symbols, power=a.power, persist=a.persist))
 
     p = sub.add_parser('disk', help='clone a test disk and install theme packs')
     p.add_argument('--base', required=True, help='disk image to clone (never modified)')
@@ -194,10 +200,10 @@ def main():
     p.add_argument('--here', action='store_true', help='start from the current screen')
     p.set_defaults(func=lambda a: screen.goto(a.name, a.path, not a.here))
 
-    p = named('key', 'resume, send keys with settle waits, pause, screenshot')
+    p = named('key', 'resume, send keys with settle waits, screenshot')
     p.add_argument('keys', nargs='+', help='ret w q e a d s, or select menu up down prev next play')
-    p.add_argument('--keep-running', action='store_true')
-    p.set_defaults(func=lambda a: core.key(a.name, a.keys, a.keep_running))
+    p.add_argument('--pause', action='store_true', help='pause afterwards')
+    p.set_defaults(func=lambda a: core.key(a.name, a.keys, a.pause))
 
     for which in ('select', 'menu'):
         p = named(which, f'press {which.title()} and verify the screen changed, retrying safely')
@@ -206,8 +212,9 @@ def main():
                        help='extra guest run time before calling a press dropped')
         p.add_argument('--region', metavar='X,Y,W,H',
                        help='compare only this area (e.g. the title bar on animated screens)')
+        p.add_argument('--pause', action='store_true', help='pause afterwards')
         p.set_defaults(func=lambda a: core.button(
-            a.name, a.command, core.parse_region(a.region), a.attempts, a.settle))
+            a.name, a.command, core.parse_region(a.region), a.attempts, a.settle, a.pause))
 
     p = named('shot', 'save a screenshot (default: next file in the run\'s shots/)')
     p.add_argument('output', nargs='?')
@@ -218,15 +225,15 @@ def main():
     p.add_argument('--timeout', type=float, default=60)
     p.add_argument('--interval', type=float, default=2)
     p.add_argument('--region', metavar='X,Y,W,H')
-    p.add_argument('--keep-running', action='store_true')
+    p.add_argument('--pause', action='store_true', help='pause afterwards')
     p.set_defaults(func=lambda a: core.wait(
-        a.name, a.until, a.timeout, a.interval, core.parse_region(a.region), a.keep_running))
+        a.name, a.until, a.timeout, a.interval, core.parse_region(a.region), a.pause))
 
     p = named('run', 'resume the guest (for N seconds, then pause, if given)')
     p.add_argument('seconds', nargs='?', type=float)
     p.set_defaults(func=lambda a: core.resume(a.name, a.seconds))
     named('pause', 'pause the guest').set_defaults(func=lambda a: core.pause(a.name))
-    named('status', 'run state, PC/LR, sleep detection').set_defaults(
+    named('status', 'run state, PC/LR, standby (asleep), power').set_defaults(
         func=lambda a: core.status(a.name))
     named('quit', 'stop the VM').set_defaults(func=lambda a: core.quit_vm(a.name))
     p = named('hmp', 'run a raw HMP command (e.g. "info registers")')
