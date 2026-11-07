@@ -56,6 +56,8 @@ TOOLS = [
                     'idles on the Charging screen and never enters standby)'},
           'persist': {'type': 'boolean', 'description': 'write guest disk changes to the '
                       'run\'s disk clone (no -snapshot); the result reports its path'},
+          'battery': {'type': 'integer', 'minimum': 0, 'maximum': 1023,
+                      'description': 'raw battery reading (default 844); see vm_battery'},
           'elf': {'type': 'string', 'description': 'payload.elf matching firmware, for profiling'},
           'profile': {'type': 'array', 'items': {'type': 'string'},
                       'description': 'payload function globs to profile ([] = all); needs elf'},
@@ -78,7 +80,7 @@ TOOLS = [
          ['base', 'out']),
     tool('vm_list', 'List VMs under /tmp/ipodvm with their window titles (owner session).'),
     tool('vm_status', 'Run state, PC/LR, whether the firmware is in standby (asleep), '
-         'power, persist, speed and hold settings.', {'name': NAME}),
+         'power, persist, speed, hold and battery settings.', {'name': NAME}),
     tool('vm_power', 'Plug in or unplug external power on a running VM, as a PMU plug '
          'event: the firmware reacts at once and plugging in wakes it from standby. adapter '
          'idles on the Charging screen; usb or battery leave it and allow standby.',
@@ -88,6 +90,13 @@ TOOLS = [
          'firmware re-reads the switch at once. true locks (wheel and button input is '
          'dropped), false unlocks. VMs start unlocked.',
          {'name': NAME, 'hold': {'type': 'boolean'}}, ['hold']),
+    tool('vm_battery', 'Set the raw battery reading (0-1023) the PMU\'s A/D converter '
+         'returns on a running VM (default 844). On battery power the firmware follows '
+         'it within a minute or two: 400 shows a red battery; 0 shows the Low Battery '
+         'screen and powers off. Lower it while the VM is awake: in standby or on a '
+         'wake at 0 it powers off without the screen.',
+         {'name': NAME, 'raw': {'type': 'integer', 'minimum': 0, 'maximum': 1023}},
+         ['raw']),
     tool('vm_speed', 'Fast-forward guest time on a running VM: the timer block (kernel '
          'tick, microsecond counter) runs `factor` times faster, so timeouts such as the '
          'two-minute standby pass sooner. Device timers (wheel, LCD, audio, ATA) and the '
@@ -206,7 +215,8 @@ def call(name, a):
                            trace=a.get('trace', False), timeline=a.get('timeline'),
                            signpost=a.get('signpost', False), heap=a.get('heap'),
                            symbols=path('symbols'), cwd=str(repo),
-                           power=a.get('power', 'adapter'), persist=a.get('persist', False))
+                           power=a.get('power', 'adapter'), persist=a.get('persist', False),
+                           battery=a.get('battery'))
     if name == 'disk_prepare':
         return core.prepare_disk(a['base'], a['out'], a.get('themes'),
                                  not a.get('keep_themes', False))
@@ -218,6 +228,8 @@ def call(name, a):
         return core.set_power(vm, a['power'])
     if name == 'vm_hold':
         return core.set_hold(vm, a['hold'])
+    if name == 'vm_battery':
+        return core.set_battery(vm, a['raw'])
     if name == 'vm_speed':
         return core.set_speed(vm, a['factor'])
     if name == 'vm_quit':

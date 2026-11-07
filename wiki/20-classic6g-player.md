@@ -105,9 +105,16 @@ precisely to be plugged in.
 **Careful about which one is reported**, and getting it wrong is measured: with the
 **wall adapter** the device enters its full-screen charging screen and stops playing —
 which is what a real iPod does, that is, the model got it right and the choice was
-bad. With **USB** it stays usable, but the player aborts again. Today `adapter` is the
-one that keeps playback going, and the charging screen only appears when it sits idle:
-you get out of it by pressing any key.
+bad.
+
+**On battery** the player keeps playing, and the firmware judges the charge from the
+battery conversion alone: firmware 2.0.5 converts the battery as ADCC1 `0x1d`
+(BATSNS_SUBTR, average of 16) and polls ADCS3/ADCS1. The machine's `battery` property
+(start-up value `PMUBATT`, raw 0–1023, default 844) sets that reading. At 0 the
+firmware builds `TChargingModeLowPowerCntlr` (`0x0820ca90`), shows "Low Battery —
+Connect to Power" (`ChargingMode_Image_Critical`) and powers off. Battery power also
+reaches the Now Playing idle clock (`TMediaNowPlayingCntlr_Idle`): play a track and
+leave the VM alone for the backlight timeout plus 60 s. The adapter blocks it.
 
 ## How to bring it up
 

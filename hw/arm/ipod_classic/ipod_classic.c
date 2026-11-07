@@ -438,6 +438,42 @@ static void ipod_classic_set_hold(Object *obj, bool value, Error **errp)
     ipod_classic_pmu_set_hold(nms->pmu, value);
 }
 
+static void ipod_classic_get_battery(Object *obj, Visitor *v, const char *name,
+                                     void *opaque, Error **errp)
+{
+    IPodClassicMachineState *nms = IPOD_CLASSIC_MACHINE(obj);
+    uint32_t value;
+
+    if (!nms->pmu) {
+        error_setg(errp, "battery: the PMU does not exist yet");
+        return;
+    }
+    value = nms->pmu->battery_raw;
+    visit_type_uint32(v, name, &value, errp);
+}
+
+static void ipod_classic_set_battery(Object *obj, Visitor *v, const char *name,
+                                     void *opaque, Error **errp)
+{
+    IPodClassicMachineState *nms = IPOD_CLASSIC_MACHINE(obj);
+    uint32_t value;
+
+    if (!visit_type_uint32(v, name, &value, errp)) {
+        return;
+    }
+    if (!nms->pmu) {
+        error_setg(errp, "battery: the PMU does not exist yet; use PMUBATT "
+                   "to choose the reading at start-up");
+        return;
+    }
+    if (value > S5L8702_PMU_ADC_MAX) {
+        error_setg(errp, "battery must be 0 to %d, not %" PRIu32,
+                   S5L8702_PMU_ADC_MAX, value);
+        return;
+    }
+    ipod_classic_pmu_set_battery(nms->pmu, value);
+}
+
 static void ipod_classic_get_speed(Object *obj, Visitor *v, const char *name,
                                    void *opaque, Error **errp)
 {
@@ -513,6 +549,13 @@ static void ipod_classic_instance_init(Object *obj)
         "Hold switch position: true is locked. Starts unlocked; settable "
         "while running (qom-set /machine hold true), which raises the PMU's "
         "hold interrupt.");
+
+    object_property_add(obj, "battery", "uint32", ipod_classic_get_battery,
+                        ipod_classic_set_battery, NULL, NULL);
+    object_property_set_description(obj, "battery",
+        "Raw battery-sense reading the PMU's A/D converter returns, 0 to "
+        "1023. Settable while running (qom-set /machine battery 600); the "
+        "start-up value comes from PMUBATT, default 844.");
 
     object_property_add(obj, "speed", "uint32", ipod_classic_get_speed,
                         ipod_classic_set_speed, NULL, NULL);

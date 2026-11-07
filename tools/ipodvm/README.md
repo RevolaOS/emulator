@@ -78,6 +78,16 @@ hold interrupt, so the firmware re-reads the switch at once. While locked the
 firmware parks the click wheel lines, so wheel and button input is dropped;
 a key still wakes the VM from standby.
 
+`battery RAW` sets the raw battery reading, 0–1023, that the PMU's A/D
+converter returns on a running VM (QMP `qom-set /machine battery`);
+`launch --battery RAW` sets it at start-up (default 844). Apple's scaling of
+the reading is not known, so it is given raw. On battery power the firmware
+follows a change within a minute or two: at 400 the status-bar battery is red; at 0 it
+shows "Low Battery — Connect to Power" and powers off, leaving that screen
+in the frame. Standby or a wake at 0 powers off without the screen, so lower
+the reading while the VM is awake. The Charging screen on the adapter does
+not follow the reading.
+
 `speed N` fast-forwards guest time on a running VM (QMP
 `qom-set /machine speed N`, 1–64, 1 = real time). It runs the timer block N
 times faster, and the firmware takes its kernel tick (timer B) and its

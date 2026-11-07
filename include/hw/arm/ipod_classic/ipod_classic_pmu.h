@@ -56,6 +56,9 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicPMUState, IPOD_CLASSIC_PMU)
 #define PCF50635_REG_GPIOSTAT  0x87
 
 #define PCF5063X_ADCC1_ADCSTART   0x01
+#define PCF5063X_ADCC1_MUX_MASK   0xf0
+#define PCF5063X_ADCC1_MUX_BATSNS_RES    0x00
+#define PCF5063X_ADCC1_MUX_BATSNS_SUBTR  0x10
 #define PCF5063X_ADCS3_ADCRDY     0x80
 
 /*
@@ -142,6 +145,7 @@ typedef enum IPodClassicPMUPower {
  * interesting one.
  */
 #define S5L8702_PMU_ADC_BATTERY_RAW  844
+#define S5L8702_PMU_ADC_MAX          1023
 
 struct IPodClassicPMUState {
     I2CSlave parent_obj;
@@ -161,6 +165,7 @@ struct IPodClassicPMUState {
 
     IPodClassicPMUPower power;
     bool hold;            /* the hold switch is in the locked position */
+    uint32_t battery_raw; /* battery-sense conversion result, 0..1023 */
 
     /* The chip's INT output, active low; see pmu_update_irq. */
     qemu_irq irq;
@@ -178,5 +183,11 @@ void ipod_classic_pmu_set_power(IPodClassicPMUState *s, IPodClassicPMUPower powe
  * on, and INT6 latches the change event.
  */
 void ipod_classic_pmu_set_hold(IPodClassicPMUState *s, bool hold);
+
+/*
+ * Set the raw battery-sense reading, 0..1023, that the next battery
+ * conversion returns.
+ */
+void ipod_classic_pmu_set_battery(IPodClassicPMUState *s, uint32_t raw);
 
 #endif

@@ -69,6 +69,10 @@ STANDBY_WFI = range(0x22002e6c, 0x22002e78)
 # without the wall adapter; on the adapter it idles on the Charging screen.
 POWER = {'adapter': 'adapter', 'usb': 'usb', 'battery': None}
 
+# battery: the raw battery-sense reading the PMU's A/D converter returns
+# (PMUBATT at start-up, the machine's "battery" property while running).
+MAX_BATTERY, DEFAULT_BATTERY = 1023, 844
+
 # speed: the machine's "speed" property runs the timer block, and with it the
 # firmware's kernel tick and microsecond counter, up to 64x faster.
 MAX_SPEED = 64
@@ -710,7 +714,7 @@ def prepare_disk(base, out, themes=None, clean=True):
 def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=False,
            wait=True, boot_timeout=180, elf=None, profile=None, fns=None, trace=False,
            timeline=None, signpost=False, heap=None, symbols=None, cwd=None,
-           power='adapter', persist=False):
+           power='adapter', persist=False, battery=None):
     """Start a VM; with `wait`, return once the first screen is stable."""
     cwd = Path(cwd or Path.cwd())
     firmware = Path(firmware).expanduser().resolve()
@@ -725,6 +729,8 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=
         raise Failure('profiling payload functions needs the matching payload.elf')
     if power not in POWER:
         raise Failure(f'unknown power {power!r}; use {sorted(POWER)}')
+    if battery is not None and not 0 <= battery <= MAX_BATTERY:
+        raise Failure(f'battery must be 0 to {MAX_BATTERY}, not {battery}')
     base, file_offset = parse_layout(layout)
     if not QEMU.exists():
         raise Failure(f'{QEMU} missing; build QEMU first (see README.md)')
@@ -749,6 +755,9 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=
     environment.pop('PMUCHARGER', None)
     if POWER[power]:
         environment['PMUCHARGER'] = POWER[power]
+    environment.pop('PMUBATT', None)
+    if battery is not None:
+        environment['PMUBATT'] = str(battery)
     title = title or owner_label(name, cwd)
     # QEMU option values escape a comma by doubling it.
     command = [str(QEMU), '-name', title.replace(',', ',,'), '-M', 'iPod-Classic',
@@ -804,7 +813,8 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=
     record = {'title': title, 'command': command, 'environment': environment,
               'firmware': {'path': str(firmware), 'sha256': hashlib.sha256(image).hexdigest()},
               'disk': str(disk), 'layout': str(layout.resolve()), 'profile': profiling,
-              'power': power, 'persist': persist}
+              'power': power, 'persist': persist,
+              'battery': DEFAULT_BATTERY if battery is None else battery}
     (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
 
     with (run / 'qemu.log').open('w') as output:
@@ -861,7 +871,8 @@ def status(name):
             'title': record.get('title', ''), 'firmware': record['firmware'],
             'profile': record.get('profile'), 'power': record.get('power', 'adapter'),
             'persist': record.get('persist', False), 'speed': record.get('speed', 1),
-            'hold': record.get('hold', False), 'run': str(run)}
+            'hold': record.get('hold', False),
+            'battery': record.get('battery', DEFAULT_BATTERY), 'run': str(run)}
 
 
 def set_power(name, power):
@@ -890,6 +901,21 @@ def set_hold(name, on):
     record['hold'] = current
     (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
     return {'name': name, 'hold': current, 'previous': previous}
+
+
+def set_battery(name, raw):
+    """Set the raw battery reading (0-1023) on a running VM."""
+    if not 0 <= raw <= MAX_BATTERY:
+        raise Failure(f'battery must be 0 to {MAX_BATTERY}, not {raw}')
+    run = run_dir(name)
+    with QMP(run) as qmp:
+        previous = qmp.execute('qom-get', {'path': '/machine', 'property': 'battery'})
+        qmp.execute('qom-set', {'path': '/machine', 'property': 'battery', 'value': raw})
+        current = qmp.execute('qom-get', {'path': '/machine', 'property': 'battery'})
+    record = json.loads((run / 'launch.json').read_text())
+    record['battery'] = current
+    (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
+    return {'name': name, 'battery': current, 'previous': previous}
 
 
 def apply_speed(qmp, factor):

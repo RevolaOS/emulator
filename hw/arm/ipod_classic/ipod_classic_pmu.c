@@ -24,7 +24,8 @@
  *     regulator voltages, enables, interrupt masks and standby control get
  *     written and, when read back, have to read back.
  *   - The A/D converter. ADCC1 bit 0 starts a conversion; ADCS1/ADCS2/ADCS3
- *     return a 10-bit result with ADCRDY set. See the note on the value below.
+ *     return a 10-bit result with ADCRDY set. The battery inputs return a
+ *     reading changeable while running; see pmu_start_adc.
  *   - The interrupt status registers INT1..INT5 and INT6, which are
  *     read-to-clear on the real chip and therefore must not be a plain
  *     register file: a driver that reads them expects the bits to go away.
@@ -38,9 +39,8 @@
  *
  * WHAT IS NOT
  *
- *   - The RTC. It reads back whatever was written, which is wrong, and is
- *     flagged here because on the 5G an absent RTC had a visible side effect:
- *     Rockbox decided an alarm had gone off on every boot.
+ *   - Setting the RTC. Reads return host time (see pmu_reg_read); writes are
+ *     stored and never read back.
  *   - Charging, the ON/OFF controller and the regulators. Writing them changes
  *     nothing, because there is no voltage in here for a voltage to mean.
  *
@@ -50,10 +50,10 @@
  *     any of our sources, and neither Rockbox nor iPodLinux reads them. They
  *     answer zero. If the firmware turns out to compare them against something
  *     the disassembly will say what, and then they get a real value.
- *   - The battery reading, 844 out of 1023. Through Rockbox's own conversion
- *     (pmu-6g.c: raw * 2000 / 1023 + 2250) that is 3900 mV, an ordinary
- *     charged-but-not-full lithium cell. Nothing in our sources says what a
- *     real one reads; the number is chosen to be unremarkable.
+ *   - The default battery reading, 844 out of 1023. Through Rockbox's own
+ *     conversion (pmu-6g.c: raw * 2000 / 1023 + 2250) that is 3900 mV, an
+ *     ordinary charged-but-not-full lithium cell. Nothing in our sources says
+ *     what a real one reads; the number is chosen to be unremarkable.
  */
 
 #include "qemu/osdep.h"
@@ -66,24 +66,16 @@
 #include "hw/arm/ipod_classic/ipod_classic_pmu.h"
 
 /*
- * PMUBATT=N overrides the raw battery reading, 0..1023.
- *
- * Why this needs to be reachable: on the way into a song retailOS puts up its
- * "low battery -- connect to power" screen and refuses to play, which is a
- * plausible reason for playback to start and immediately stop. The default 844
- * is 3900 mV only through ROCKBOX's conversion; what Apple's power manager makes
- * of the same number is UNDETERMINED, so the honest thing is to be able to vary
- * it and see, rather than to assume the two firmwares scale it alike.
+ * PMUBATT=N sets the raw battery reading at start-up, 0..1023; the machine's
+ * "battery" property changes it later (ipod_classic_pmu_set_battery). The
+ * default 844 is 3900 mV only through ROCKBOX's conversion; how Apple's power
+ * manager scales the same number is not known, so the reading is given raw.
  */
-static uint32_t pmu_battery_raw(void)
+static uint32_t pmu_initial_battery(void)
 {
     const char *e = getenv("PMUBATT");
     if (e && *e) {
-        unsigned long v = strtoul(e, NULL, 0);
-        if (v > 1023) {
-            v = 1023;
-        }
-        return (uint32_t)v;
+        return MIN(strtoul(e, NULL, 0), S5L8702_PMU_ADC_MAX);
     }
     return S5L8702_PMU_ADC_BATTERY_RAW;
 }
@@ -168,9 +160,26 @@ void ipod_classic_pmu_set_hold(IPodClassicPMUState *s, bool hold)
     pmu_update_irq(s);
 }
 
+void ipod_classic_pmu_set_battery(IPodClassicPMUState *s, uint32_t raw)
+{
+    s->battery_raw = MIN(raw, S5L8702_PMU_ADC_MAX);
+}
+
+/*
+ * One conversion, finished at once. Firmware 2.0.5 converts two inputs
+ * (PMUTRACE): the battery, as ADCC1 0x1d (BATSNS_SUBTR, average of 16,
+ * 10 bits), and ADCIN1, as ADCC1 0x7f with ADCC2 0x02 (ratiometric) and
+ * ADCC3 0x01 (ACCSW_EN), which is Rockbox's accessory-identification setup
+ * (adc-6g.c). Each time it polls ADCS3 for ADCRDY and then reads ADCS1.
+ * The battery inputs return battery_raw; every other input returns the fixed
+ * default, which the firmware has always been given for them.
+ */
 static void pmu_start_adc(IPodClassicPMUState *s)
 {
-    uint32_t raw = pmu_battery_raw();
+    uint8_t mux = s->reg[PCF5063X_REG_ADCC1] & PCF5063X_ADCC1_MUX_MASK;
+    uint32_t raw = (mux == PCF5063X_ADCC1_MUX_BATSNS_RES ||
+                    mux == PCF5063X_ADCC1_MUX_BATSNS_SUBTR)
+                   ? s->battery_raw : S5L8702_PMU_ADC_BATTERY_RAW;
 
     s->reg[PCF5063X_REG_ADCS1] = (raw >> 2) & 0xff;
     s->reg[PCF5063X_REG_ADCS2] = 0;
@@ -222,11 +231,10 @@ static uint8_t pmu_reg_read(IPodClassicPMUState *s, uint8_t addr)
         /*
          * External power, from s->power (see pmu_initial_power).
          *
-         * MEASURED: with the default "on battery, no charger" report the
-         * retailOS eventually puts up "Low Battery -- Connect to Power" and
-         * stops playing, and raising the battery ADC to full scale does NOT
-         * prevent it (see the note above pmu_battery_raw). That is coherent --
-         * it is asking to be plugged in, and nothing here ever says it is.
+         * MEASURED: on battery the firmware plays and judges the charge from
+         * the battery conversion alone. With the reading at 0 it shows
+         * "Low Battery -- Connect to Power" (TChargingModeLowPowerCntlr,
+         * built at 0x0820ca90) within about two minutes and powers off.
          *
          * WHICH KIND of external power matters, and getting it wrong was
          * MEASURED: reporting the wall ADAPTER puts the device into its
@@ -281,14 +289,9 @@ static uint8_t pmu_reg_read(IPodClassicPMUState *s, uint8_t addr)
 
     /*
      * PMUTRACE=1: which registers does Apple's power manager actually consult?
-     *
-     * Needed because raising the battery ADC to full scale (PMUBATT=1023) did
-     * NOT stop retailOS putting up "low battery -- connect to power", so the
-     * verdict is not coming from the channel this model answers with. Only the
-     * PMU and the CS42L55 sit on I2C here, so it has to be some other register
-     * of this part. Counting each address, and printing the first few reads of
-     * each, says which ones without burying the firmware's own semihosting
-     * output on the same stream.
+     * Counting each address, and printing the first few reads of each, says
+     * which ones without burying the firmware's own semihosting output on the
+     * same stream.
      */
     if (getenv("PMUTRACE")) {
         static uint32_t seen[256];
@@ -302,6 +305,15 @@ static uint8_t pmu_reg_read(IPodClassicPMUState *s, uint8_t addr)
 
 static void pmu_reg_write(IPodClassicPMUState *s, uint8_t addr, uint8_t val)
 {
+    /* PMUTRACE=1 also prints the first write of each value to each register. */
+    if (getenv("PMUTRACE")) {
+        static bool seen[256][256];
+        if (!seen[addr][val]) {
+            seen[addr][val] = true;
+            fprintf(stderr, "PMUTRACE: write reg 0x%02x <- 0x%02x\n", addr, val);
+        }
+    }
+
     switch (addr) {
     case PCF5063X_REG_INT1:
     case PCF5063X_REG_INT2:
@@ -490,13 +502,14 @@ static void ipod_classic_pmu_init(Object *obj)
      */
     s->power = pmu_initial_power();
     s->hold = false;
+    s->battery_raw = pmu_initial_battery();
     qdev_init_gpio_out_named(DEVICE(obj), &s->irq, "irq", 1);
 }
 
 static const VMStateDescription vmstate_ipod_classic_pmu = {
     .name = TYPE_IPOD_CLASSIC_PMU,
-    .version_id = 3,
-    .minimum_version_id = 3,
+    .version_id = 4,
+    .minimum_version_id = 4,
     .fields = (VMStateField[]) {
         VMSTATE_I2C_SLAVE(parent_obj, IPodClassicPMUState),
         VMSTATE_UINT8_ARRAY(reg, IPodClassicPMUState, S5L8702_PMU_NUM_REGS),
@@ -505,6 +518,7 @@ static const VMStateDescription vmstate_ipod_classic_pmu = {
         VMSTATE_UINT8(addr_saved, IPodClassicPMUState),
         VMSTATE_BOOL(wrote_data, IPodClassicPMUState),
         VMSTATE_BOOL(hold, IPodClassicPMUState),
+        VMSTATE_UINT32(battery_raw, IPodClassicPMUState),
         VMSTATE_END_OF_LIST()
     },
 };
