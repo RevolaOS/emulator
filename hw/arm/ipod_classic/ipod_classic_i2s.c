@@ -479,11 +479,13 @@ static void i2s_live_sample(IPodClassicI2SState *s, uint64_t value, unsigned siz
  * Counting the samples the chunk actually moved (tx_samples delta) makes the
  * cadence self-correcting regardless of the chunk size the firmware chose.
  */
+#define I2S_PACE_MAX_LAG (20 * 1000 * 1000LL)   /* 20 ms */
+
 static void ipod_classic_i2s_drain(void *opaque)
 {
     IPodClassicI2SState *s = opaque;
     uint64_t before, moved;
-    int64_t delay_ns;
+    int64_t delay_ns, now;
     uint32_t rate;
 
     if (!s->tx_running || !s->dmac0) {
@@ -534,7 +536,20 @@ static void ipod_classic_i2s_drain(void *opaque)
                 "(%u Hz) -> next tick in %" PRId64 " us\n",
                 moved, rate, delay_ns / 1000);
     }
-    s->next_tick_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + delay_ns;
+    /*
+     * Chain chunk deadlines rather than counting from now: the timer fires
+     * late by its host latency every tick, and adding that to every chunk
+     * plays the stream a few percent slow, which drains the live cushion into
+     * gaps. A tick more than I2S_PACE_MAX_LAG late (start, resume, idle poll,
+     * a stalled host) restarts the chain from now instead of bursting to catch
+     * up.
+     */
+    now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    if (moved >= 2 && now - s->next_tick_ns <= I2S_PACE_MAX_LAG) {
+        s->next_tick_ns += delay_ns;
+    } else {
+        s->next_tick_ns = now + delay_ns;
+    }
     timer_mod(s->drain_timer, s->next_tick_ns);
 }
 

@@ -1268,6 +1268,14 @@ static void ipod_classic_sm1_init(Object *obj)
                   (int64_t)SM1_IRQ_TICK_MS * 1000000);
         fprintf(stderr, "SM1_IRQ: engine interrupt armed on VIC0 line 18\n");
     }
+
+    /*
+     * Settle SM1_SYNC now, not at the engine's first use: it switches the host
+     * decoder to the file's own channel count, and a track whose decode starts
+     * before that is decoded as stereo. The engine then reads those pairs as
+     * mono samples and the firmware plays every sample twice.
+     */
+    sm1_sync_on();
 }
 
 static const VMStateDescription vmstate_ipod_classic_sm1 = {
