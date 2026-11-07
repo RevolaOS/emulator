@@ -410,8 +410,11 @@ def prepare_disk(base, out, themes=None, clean=True):
     volume = f'{out}@@{fat_offset(out)}'
     env = dict(os.environ, MTOOLS_SKIP_CHECK='1')   # iPod media byte 0xf2
 
+    # mmd asks how to resolve an existing folder on the controlling terminal,
+    # even with stdin redirected, so every mmd call passes `-D s` (skip).
     def mtools(*command, check=True):
-        return subprocess.run(command, env=env, capture_output=True, text=True, check=check)
+        return subprocess.run(command, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, check=check)
 
     installed = []
     if themes:
@@ -419,7 +422,7 @@ def prepare_disk(base, out, themes=None, clean=True):
         packs = sorted(p for p in themes.rglob('*.bin') if p.is_file())
         if not packs:
             raise Failure(f'no .bin packs under {themes}')
-        mtools('mmd', '-i', volume, '::/themes', check=False)
+        mtools('mmd', '-D', 's', '-i', volume, '::/themes', check=False)
         if clean:
             listing = mtools('mdir', '-b', '-i', volume, '::/themes', check=False).stdout
             for entry in filter(None, (line.strip() for line in listing.splitlines())):
@@ -433,7 +436,7 @@ def prepare_disk(base, out, themes=None, clean=True):
             folder = '::/themes'
             for part in relative.parts[:-1]:
                 folder += f'/{part}'
-                mtools('mmd', '-i', volume, folder, check=False)
+                mtools('mmd', '-D', 's', '-i', volume, folder, check=False)
             mtools('mcopy', '-o', '-i', volume, str(pack), f'{folder}/{relative.name}')
             installed.append(f'/themes/{relative.as_posix()}')
     return {'disk': str(out), 'fat_offset': fat_offset(out), 'installed': installed}
