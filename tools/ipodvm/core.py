@@ -515,21 +515,24 @@ def next_shot(run, label):
 
 
 def parse_layout(path):
+    """Core base address and file offset from revola's core/layout.h or RepriseOS's
+    payload/native/layout.h."""
     text = Path(path).read_text()
-    values = {}
-    for key in ('CFW_PAYLOAD_BASE', 'CFW_PAYLOAD_FILE_OFFSET'):
-        match = re.search(rf'#define\s+{key}\s+(0x[0-9a-fA-F]+)', text)
-        if not match:
-            raise Failure(f'{path}: {key} not found')
-        values[key] = int(match.group(1), 16)
-    return values['CFW_PAYLOAD_BASE'], values['CFW_PAYLOAD_FILE_OFFSET']
+    for base_key, offset_key in (('CORE_BASE', 'CORE_FILE_OFFSET'),
+                                 ('CFW_PAYLOAD_BASE', 'CFW_PAYLOAD_FILE_OFFSET')):
+        base = re.search(rf'#define\s+{base_key}\s+(0x[0-9a-fA-F]+)', text)
+        offset = re.search(rf'#define\s+{offset_key}\s+(0x[0-9a-fA-F]+)', text)
+        if base and offset:
+            return int(base.group(1), 16), int(offset.group(1), 16)
+    raise Failure(f'{path}: no core or payload layout macros found')
 
 
 def find_layout(start):
     for directory in [start, *start.parents]:
-        candidate = directory / 'payload/native/layout.h'
-        if candidate.is_file():
-            return candidate
+        for relative in ('core/layout.h', 'payload/native/layout.h'):
+            candidate = directory / relative
+            if candidate.is_file():
+                return candidate
     return None
 
 
@@ -753,8 +756,8 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=
     if layout is None and elf:
         layout = find_layout(Path(elf).resolve().parent)
     if layout is None:
-        raise Failure('payload/native/layout.h not found; run from the firmware '
-                      'repository or pass a layout path')
+        raise Failure('core/layout.h not found; run from the firmware repository '
+                      'or pass a layout path')
     if profile is not None and not elf:
         raise Failure('profiling payload functions needs the matching payload.elf')
     if power not in POWER:
