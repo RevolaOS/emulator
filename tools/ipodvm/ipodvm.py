@@ -232,8 +232,12 @@ def main():
     p.add_argument('--themes', help='directory mirroring /themes (e.g. classic/default.bin)')
     p.add_argument('--keep-themes', action='store_true',
                    help='keep packs already on the base disk')
+    p.add_argument('--copy', action='append', default=[], metavar='SRC:/DEST',
+                   help='copy a file onto the disk, e.g. build/x.rvx:/Revola/x.rvx')
     p.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
-    p.set_defaults(func=lambda a: core.prepare_disk(a.base, a.out, a.themes, not a.keep_themes))
+    p.set_defaults(func=lambda a: core.prepare_disk(
+        a.base, a.out, a.themes, not a.keep_themes,
+        [tuple(c.split(':', 1)) for c in a.copy]))
 
     p = named('screen', 'read the screen: title, rows, selected row, values')
     p.set_defaults(func=lambda a: screen.screen(a.name))

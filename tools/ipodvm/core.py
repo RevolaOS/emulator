@@ -691,13 +691,14 @@ def fat_offset(disk):
     raise Failure(f'{disk}: no FAT32 volume found')
 
 
-def prepare_disk(base, out, themes=None, clean=True):
-    """Clone `base` to `out` and install theme packs from `themes`.
+def prepare_disk(base, out, themes=None, clean=True, copies=()):
+    """Clone `base` to `out`, install theme packs from `themes` and copy `copies`.
 
     `themes` mirrors the device's /themes tree (classic/default.bin,
     classic/dark.bin, <id>/theme.bin, ...); only .bin files are copied, as the
     installer does. With `clean`, existing /themes entries are removed first so
-    stale packs from older catalogs cannot be discovered.
+    stale packs from older catalogs cannot be discovered. `copies` are
+    `(source, "/path/on/disk")` pairs; missing folders are created.
     """
     base, out = Path(base).expanduser().resolve(), Path(out).expanduser().resolve()
     if base == out:
@@ -739,6 +740,17 @@ def prepare_disk(base, out, themes=None, clean=True):
                 mtools('mmd', '-D', 's', '-i', volume, folder, check=False)
             mtools('mcopy', '-o', '-i', volume, str(pack), f'{folder}/{relative.name}')
             installed.append(f'/themes/{relative.as_posix()}')
+    for source, destination in copies:
+        source = Path(source).expanduser().resolve()
+        if not source.is_file():
+            raise Failure(f'{source} is not a file')
+        parts = destination.strip('/').split('/')
+        folder = '::'
+        for part in parts[:-1]:
+            folder += f'/{part}'
+            mtools('mmd', '-D', 's', '-i', volume, folder, check=False)
+        mtools('mcopy', '-o', '-i', volume, str(source), f'{folder}/{parts[-1]}')
+        installed.append('/' + '/'.join(parts))
     return {'disk': str(out), 'fat_offset': fat_offset(out), 'installed': installed}
 
 
