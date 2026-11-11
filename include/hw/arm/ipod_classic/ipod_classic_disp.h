@@ -47,38 +47,41 @@
  *  +0x00c  (M) 0x000f0f0f from a literal at 0x08127460. UNDETERMINED.
  *  +0x020  (M) written 1 next to +0x004. UNDETERMINED.
  *  +0x024  (M) 0x00ffffff. UNDETERMINED.
- *  +0x030  (V) destination rectangle origin, (y | x << 16)
- *  +0x034  (V) destination rectangle limit, ((y+h) | (x+w) << 16)
- *          Both from 0x08127964, the blit entry point.
- *  +0x038  (V) SOURCE ADDRESS, plane 0   \
- *  +0x03c  (V) SOURCE ADDRESS, plane 1    |  written together by 0x081276dc
- *  +0x040  (V) SOURCE ADDRESS, plane 2    |  case 5, the planar-YUV path, for
- *  +0x044  (V) SOURCE ADDRESS, plane 3   /   pixel formats 8, 9 and 10.
- *  +0x04c  (V) (dstW | dstH << 16) from 0x08127d8c
- *  +0x050  (V) (x | y << 16) centring offset, 0x08127e30
- *  +0x054  (V) (w | h << 16) clipped size, 0x08127e20
+ *  +0x028..+0x054  (V,M) THE VIDEO WINDOW, window 5: a scaled planar YUV
+ *          scanout window, enabled by CONTROL bit 7. DisplayPipe_ConfigureWindow
+ *          (0x08143c30) and DisplayPipe_SetWindowSource (0x081445cc), case 5 of
+ *          each. See S5L8702_DISP_VIDEO_* below.
+ *            +0x028  mode, 0x100 for format 8 (YUV 4:2:0), else 0
+ *            +0x02c  luma stride | chroma stride << 16, bytes
+ *            +0x030  source crop start, (x << 16 | y)
+ *            +0x034  source crop end,   (x << 16 | y)
+ *            +0x038  Y plane
+ *            +0x03c  Cb, surface plane 3
+ *            +0x040  0 for format 8
+ *            +0x044  Cr, surface plane 2
+ *            +0x04c  scale step, h << 16 | v, 4.12 fixed point (0x1000 = 1:1)
+ *            +0x050  position on the panel, (x << 16 | y)
+ *            +0x054  size on the panel,     (w << 16 | h)
+ *          MEASURED while the main menu scrolls: mode 0x100, strides 320/160,
+ *          crop 0..320x240, step 1:1, position 0,0, size 320x240. The Y plane
+ *          is the grey preview-pane gradient.
  *  +0x060  (V) SOURCE ADDRESS, slot 0  \
  *  +0x078  (V) SOURCE ADDRESS, slot 1   |  0x081276dc cases 0..4. Stride 0x18.
  *  +0x090  (V) SOURCE ADDRESS, slot 2   |  Which slot is used is chosen by the
  *  +0x0a8  (V) SOURCE ADDRESS, slot 3   |  caller, not by this block.
  *  +0x0c0  (V) SOURCE ADDRESS, slot 4  /
- *  +0x0d4  (V,M) LAYER ORDER, (order | b << 8). The low byte selects one of
- *          the six stacking orders of layers 0..2; see S5L8702_DISP_ORDER
- *          below. Bits 15:8 are UNDETERMINED (2 on menus, 0 in a game).
- *  +0x0d8  (V,M) LAYER 0 config, +0x0dc LAYER 0 (second word)
- *  +0x0e0  (V,M) LAYER 1 config, +0x0e4 LAYER 1
- *  +0x0e8  (V,M) LAYER 2 config, +0x0ec LAYER 2
- *          2.0.5 writes three fields of the config word, each with a
- *          read-modify-write through the table of the three addresses at
- *          0x083f35e0:
- *            bits 31:28 and 15:12  a mode pair from 0x081447a8, one of
- *                       (1,0), (0,1), (5,4), (9,8), (11,10)
- *            bits 7:0   a per-layer constant, stored at 0x08144470
- *          The pairs read as (1 - w, w) blend weights, and the low byte as a
- *          constant alpha. INFERRED from their shape; NOT MODELLED. MEASURED:
- *          menus and Now Playing use 0x900080ff / 0x500040ff / 0x50004000 for
- *          layers 0 / 1 / 2, and a running game 0x500040ff for layer 0 and
- *          0x900080ff for layer 1.
+ *  +0x0d4  (V,M) WINDOW ORDER, (order | b << 8). The low byte selects which
+ *          blend register each blend column gets; see S5L8702_DISP_ORDER below.
+ *          Bits 15:8 are UNDETERMINED (2 on menus, 0 in a game).
+ *  +0x0d8, +0x0e0, +0x0e8  (V,M) THE THREE BLEND REGISTERS, one per stacking
+ *          position, indexed by the window order rather than by window.
+ *            bits 31:28 and 15:12  blend mode, DisplayPipe_SetWindowBlendMode
+ *                       (0x0814472c): modes 0..4 are the pairs (1,0), (0,1),
+ *                       (5,4), (9,8), (11,10)
+ *            bits 7:0   global alpha, DisplayPipe_SetWindowAlpha (0x08144410)
+ *          The modes are NOT MODELLED. MEASURED on menus: 0x900080ff (mode 3,
+ *          alpha 0xff) at +0x0d8, which with order 1 belongs to the video
+ *          window.
  *  +0x0f0..+0x17c (V) nine 4-word entries, copied by 0x081276a0
  *  +0x180..+0x1c4 (V) nine 2-word entries, copied by 0x08127664
  *  +0x1ec..+0x1fc (V,M) five words copied straight out of a struct by
@@ -121,12 +124,11 @@
  * note below, and ipod_classic_disp.c for the composition itself.
  *
  * WHAT IT DOES NOT DO: the gamma tables, the four colour-matrix coefficient
- * tables, the scaler (+0x04c/+0x50/+0x54), the destination rectangle
- * (+0x030/+0x034) and the rotate bit in +0x3ac are all stored and read back but
- * none of them affects the picture. Every one of them is the identity in every
- * boot measured so far -- the gamma tables are literally tbl[i] = i * 4 -- so
- * honouring them would change nothing today and could only be tested against a
- * guest that stops using the identity.
+ * tables, the scaler filter tables, the blend modes and the rotate bit in
+ * +0x3ac are all stored and read back but none of them affects the picture.
+ * The gamma tables are the identity in every boot measured so far -- literally
+ * tbl[i] = i * 4 -- so honouring them would change nothing today. The video
+ * window's scaler steps are honoured by nearest-neighbour sampling.
  *
  * A boot with no disk never writes a source address into any slot at all
  * (MEASURED: zero writes to +0x038..+0x0c0 in a 40-second diskless boot,
@@ -201,13 +203,20 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicDispState, IPOD_CLASSIC_DISP)
 #define S5L8702_DISP_UNK04      0x004
 #define S5L8702_DISP_CONTROL    0x008
 #define S5L8702_DISP_UNK0C      0x00c
-#define S5L8702_DISP_DST_ORIGIN 0x030
-#define S5L8702_DISP_DST_LIMIT  0x034
+#define S5L8702_DISP_VIDEO_MODE     0x028
+#define S5L8702_DISP_VIDEO_STRIDES  0x02c
+#define S5L8702_DISP_VIDEO_CROP0    0x030
+#define S5L8702_DISP_VIDEO_CROP1    0x034
+#define S5L8702_DISP_VIDEO_Y        0x038
+#define S5L8702_DISP_VIDEO_CB       0x03c
+#define S5L8702_DISP_VIDEO_CR       0x044
+#define S5L8702_DISP_VIDEO_STEP     0x04c
+#define S5L8702_DISP_VIDEO_POS      0x050
+#define S5L8702_DISP_VIDEO_SIZE     0x054
+#define S5L8702_DISP_VIDEO_MODE_YUV420 0x100
+#define S5L8702_DISP_VIDEO_EN_BIT   0x80
 #define S5L8702_DISP_SRC_PLANE0 0x038
 #define S5L8702_DISP_SRC_PLANE3 0x044
-#define S5L8702_DISP_DST_SIZE   0x04c
-#define S5L8702_DISP_DST_OFF    0x050
-#define S5L8702_DISP_DST_CLIP   0x054
 #define S5L8702_DISP_SRC_SLOT0  0x060
 #define S5L8702_DISP_SRC_STRIDE 0x018
 #define S5L8702_DISP_NSLOT      5
@@ -236,8 +245,9 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicDispState, IPOD_CLASSIC_DISP)
  *    "bic r0, r0, #BIT / orrne r0, r0, #BIT" on the word it read from +0x008
  *    before storing it back at 0x08127250. The arms are, in index order:
  *      0 -> 0x40   1 -> 0x20   2 -> 0x10   3 -> 0x08   4 -> 0x04   5 -> 0x80
- *    Indices 0..2 are the three layers; 3..5 are something else and only
- *    index 5 (bit 7) is ever seen, twice, in a whole run.
+ *    The index is the window: 0..4 are the five layer descriptors and 5 is
+ *    the video window (DisplayPipe_SetWindowEnable, 0x081440b8). The guest
+ *    sets bit 7 for every menu slide and preview-pane change.
  *
  * 2. THE ORDER OF WRITES, traced with DISPTRACE=1. Every single time, the
  *    guest programs a descriptor, writes its SOURCE ADDRESS, and only then
@@ -255,27 +265,26 @@ OBJECT_DECLARE_SIMPLE_TYPE(IPodClassicDispState, IPOD_CLASSIC_DISP)
  * was correct about 16/20/24, and became the wrong conclusion only because it
  * stopped there and declared that nothing gated a layer at all.
  *
- * Layers 3 and 4 have no known enable bit. No boot has ever written their
- * descriptors, so the question has never come up; see the compositor.
+ * Layers 3 and 4 follow the same rule, bits 3 and 2.
  */
 #define S5L8702_DISP_LAYER_EN_BIT(k) (1u << (6 - (k)))
-#define S5L8702_DISP_NLAYER_GATED 3
 
 /*
- * THE LAYER ORDER, +0x0d4. The low byte picks how layers 0..2 stack.
+ * THE WINDOW ORDER, +0x0d4. The low byte picks how the windows stack.
  *
- * 0x0814482c stores (order | b << 8) here and keeps order at [obj + 0x1e7].
- * Every per-layer setter (the constant at 0x08144448, the mode pair at
- * 0x081447ec) then turns its logical layer i into a physical one as
- * table[order * 3 + i], where table is the 18 bytes at 0x083f35ec: the six
- * permutations of {0, 1, 2}, copied below. MEASURED: menus and Now Playing run
- * with order 1, a game with order 4.
+ * Windows fall into three blend columns: layer 0 is column 0, layers 1..3
+ * share column 1, the video window is column 2; layer 4 has no blend register.
+ * DisplayPipe_SetOrder (0x0814482c) stores (order | b << 8) here, and every
+ * per-window setter then gives column c the blend register
+ * DisplayLayerOrders[order][c] -- the 18 bytes at 0x083f35ec, copied in the
+ * compositor. MEASURED: menus and Now Playing run with order 1, a game with
+ * order 4.
  *
- * Each row lists the physical layers from BACK to FRONT. The direction is
- * fixed by order 1: Now Playing keeps the player interface in layer 0 with real
- * alpha over opaque album art in layer 1, so layer 0 has to be in front, and
- * row 1 ends in 0. In a game, order 4 brings layer 1 -- the game frame --
- * over layer 0, which is then an opaque grey surface.
+ * The blend register index is taken as the stacking position, 0 at the back.
+ * INFERRED, not proven, but it is what every screen measured needs: with order
+ * 1 the video window is at the back, where layer 0's alpha-0 holes show it,
+ * and the player interface in layer 0 is in front of the album art in layer 1.
+ * With order 4 a game's frame in layer 1 covers the grey surface in layer 0.
  */
 #define S5L8702_DISP_ORDER       0x0d4
 #define S5L8702_DISP_NORDER      6
@@ -296,6 +305,13 @@ struct IPodClassicDispState {
 
     /* Scratch for one source row, biggest case: 320 pixels at 32 bpp. */
     uint8_t rowbuf[320 * 4];
+
+    /*
+     * The frame being composed, 320x240 RGB565. Layers land here on a cleared
+     * background and the result replaces the panel image in one go, so nothing
+     * a layer stopped covering survives into the next frame.
+     */
+    uint16_t frame[320 * 240];
 };
 
 /*

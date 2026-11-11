@@ -28,6 +28,7 @@
 #include "qemu/osdep.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
+#include "qemu/timer.h"
 #include "hw/irq.h"
 #include "migration/vmstate.h"
 #include "hw/core/cpu.h"
@@ -98,27 +99,29 @@ static const char *disp_reg_name(hwaddr off)
 {
     switch (off) {
     case S5L8702_DISP_CONTROL:    return "CONTROL";
-    case S5L8702_DISP_DST_ORIGIN: return "DST_ORIGIN";
-    case S5L8702_DISP_DST_LIMIT:  return "DST_LIMIT";
-    case 0x038:                   return "SRC_PLANE0";
-    case 0x03c:                   return "SRC_PLANE1";
-    case 0x040:                   return "SRC_PLANE2";
-    case 0x044:                   return "SRC_PLANE3";
-    case S5L8702_DISP_DST_SIZE:   return "DST_SIZE";
-    case S5L8702_DISP_DST_OFF:    return "DST_OFF";
-    case S5L8702_DISP_DST_CLIP:   return "DST_CLIP";
+    case S5L8702_DISP_VIDEO_MODE:    return "VID_MODE";
+    case S5L8702_DISP_VIDEO_STRIDES: return "VID_STRIDES";
+    case S5L8702_DISP_VIDEO_CROP0:   return "VID_CROP0";
+    case S5L8702_DISP_VIDEO_CROP1:   return "VID_CROP1";
+    case S5L8702_DISP_VIDEO_Y:       return "VID_Y";
+    case S5L8702_DISP_VIDEO_CB:      return "VID_CB";
+    case 0x040:                      return "VID_PLANE2";
+    case S5L8702_DISP_VIDEO_CR:      return "VID_CR";
+    case S5L8702_DISP_VIDEO_STEP:    return "VID_STEP";
+    case S5L8702_DISP_VIDEO_POS:     return "VID_POS";
+    case S5L8702_DISP_VIDEO_SIZE:    return "VID_SIZE";
     case 0x060:                   return "SRC_SLOT0";
     case 0x078:                   return "SRC_SLOT1";
     case 0x090:                   return "SRC_SLOT2";
     case 0x0a8:                   return "SRC_SLOT3";
     case 0x0c0:                   return "SRC_SLOT4";
     case S5L8702_DISP_ORDER:      return "ORDER";
-    case 0x0d8:                   return "LAYER0_CFG";
-    case 0x0dc:                   return "LAYER0_W1";
-    case 0x0e0:                   return "LAYER1_CFG";
-    case 0x0e4:                   return "LAYER1_W1";
-    case 0x0e8:                   return "LAYER2_CFG";
-    case 0x0ec:                   return "LAYER2_W1";
+    case 0x0d8:                   return "BLEND0";
+    case 0x0dc:                   return "BLEND0_W1";
+    case 0x0e0:                   return "BLEND1";
+    case 0x0e4:                   return "BLEND1_W1";
+    case 0x0e8:                   return "BLEND2";
+    case 0x0ec:                   return "BLEND2_W1";
     case S5L8702_DISP_STATUS200:  return "STATUS200";
     case S5L8702_DISP_GEOMETRY:   return "GEOMETRY";
     case S5L8702_DISP_FORMAT:     return "FORMAT";
@@ -287,13 +290,8 @@ static bool disp_draw_layer(IPodClassicDispState *s, int k, uint16_t *fb,
      *
      * See S5L8702_DISP_LAYER_EN_BIT in the header for the disassembly of the
      * setter and for the traced write order that pins each bit to its layer.
-     *
-     * Layers 3 and 4 are not gated because we do not know which bit, if any,
-     * gates them: no boot has ever written their descriptors, so they are
-     * skipped above on src == 0 and this line never decides anything for them.
      */
-    if (k < S5L8702_DISP_NLAYER_GATED &&
-        !(s->reg[S5L8702_DISP_CONTROL >> 2] & S5L8702_DISP_LAYER_EN_BIT(k))) {
+    if (!(s->reg[S5L8702_DISP_CONTROL >> 2] & S5L8702_DISP_LAYER_EN_BIT(k))) {
         return false;
     }
     if (bpp != 2 && bpp != 4) {
@@ -374,10 +372,110 @@ static bool disp_draw_layer(IPodClassicDispState *s, int k, uint16_t *fb,
     return true;
 }
 
+static inline uint16_t disp_yuv_rgb565(int y, int cb, int cr)
+{
+    int l = 76284 * (y - 16);
+    int r = (l + 104595 * (cr - 128)) >> 16;
+    int g = (l - 25690 * (cb - 128) - 53281 * (cr - 128)) >> 16;
+    int b = (l + 132186 * (cb - 128)) >> 16;
+
+    return disp_rgb565(MIN(MAX(r, 0), 255), MIN(MAX(g, 0), 255),
+                       MIN(MAX(b, 0), 255));
+}
+
 /*
- * The six stacking orders +0x0d4 selects, each listed BACK to FRONT. A copy of
- * the firmware's own table at 0x083f35ec; see S5L8702_DISP_ORDER in the header
- * for how it is used and why the rows read back to front.
+ * Draw the video window: planar YUV 4:2:0, cropped, scaled by the 4.12 steps
+ * in +0x04c (nearest neighbour; the filter tables are not modelled) and placed
+ * at +0x050/+0x054. Opaque. Returns true if any pixel landed on the panel.
+ *
+ * Cb is +0x03c and Cr +0x044. MEASURED on the main menu's preview background:
+ * the +0x03c plane sits near 137 and the +0x044 plane near 120, which read
+ * this way gives the cool blue-grey the settled pane shows in layer 0; read the
+ * other way round it turns brown. The conversion is limited-range BT.601
+ * (Y 16..235): read as full range the pane comes out flatter than the copy the
+ * guest later bakes into layer 0, about 8 levels too dark at the top and too
+ * light at the bottom.
+ */
+static bool disp_draw_video(IPodClassicDispState *s, uint16_t *fb,
+                            unsigned width, unsigned height)
+{
+    uint32_t *r = s->reg;
+    uint32_t ysrc = r[S5L8702_DISP_VIDEO_Y >> 2];
+    uint32_t cbsrc = r[S5L8702_DISP_VIDEO_CB >> 2];
+    uint32_t crsrc = r[S5L8702_DISP_VIDEO_CR >> 2];
+    uint32_t strides = r[S5L8702_DISP_VIDEO_STRIDES >> 2];
+    uint32_t c0 = r[S5L8702_DISP_VIDEO_CROP0 >> 2];
+    uint32_t c1 = r[S5L8702_DISP_VIDEO_CROP1 >> 2];
+    uint32_t step = r[S5L8702_DISP_VIDEO_STEP >> 2];
+    uint32_t pos = r[S5L8702_DISP_VIDEO_POS >> 2];
+    uint32_t size = r[S5L8702_DISP_VIDEO_SIZE >> 2];
+    unsigned ystride = strides & 0xffff, cstride = strides >> 16;
+    int sx0 = c0 >> 16, sy0 = c0 & 0xffff;
+    int sw = (int)(c1 >> 16) - sx0, sh = (int)(c1 & 0xffff) - sy0;
+    unsigned hstep = step >> 16, vstep = step & 0xffff;
+    int x = (int16_t)(pos >> 16), y = (int16_t)pos;
+    int w = (int16_t)(size >> 16), h = (int16_t)size;
+    uint8_t *yrow = s->rowbuf;
+    uint8_t *cbrow = s->rowbuf + sizeof(s->rowbuf) / 2;
+    uint8_t *crrow = cbrow + sizeof(s->rowbuf) / 4;
+    bool drew = false;
+
+    if (!(r[S5L8702_DISP_CONTROL >> 2] & S5L8702_DISP_VIDEO_EN_BIT) ||
+        ysrc == 0 || sw <= 0 || sh <= 0 || w <= 0 || h <= 0) {
+        return false;
+    }
+    if (r[S5L8702_DISP_VIDEO_MODE >> 2] != S5L8702_DISP_VIDEO_MODE_YUV420) {
+        /* Formats 9 and 10 use the same registers but have never been seen. */
+        qemu_log_mask(LOG_UNIMP, "s5l8702.disp: video window mode 0x%x is not "
+                      "decoded; skipped\n", r[S5L8702_DISP_VIDEO_MODE >> 2]);
+        return false;
+    }
+    /* Source rows are read whole into the row scratch: half luma, two quarters
+     * chroma. A wider source is cut, never overrun. */
+    sw = MIN(sw, (int)sizeof(s->rowbuf) / 2);
+
+    for (int dy = 0; dy < h; dy++) {
+        int py = y + dy;
+        int sy = sy0 + (int)(((uint64_t)dy * vstep) >> 12);
+
+        if (py < 0) {
+            continue;
+        }
+        if (py >= (int)height || sy >= sy0 + sh) {
+            break;
+        }
+        address_space_read(&address_space_memory,
+                           ysrc + (hwaddr)sy * ystride + sx0,
+                           MEMTXATTRS_UNSPECIFIED, yrow, sw);
+        address_space_read(&address_space_memory,
+                           cbsrc + (hwaddr)(sy / 2) * cstride + sx0 / 2,
+                           MEMTXATTRS_UNSPECIFIED, cbrow, (sw + 1) / 2);
+        address_space_read(&address_space_memory,
+                           crsrc + (hwaddr)(sy / 2) * cstride + sx0 / 2,
+                           MEMTXATTRS_UNSPECIFIED, crrow, (sw + 1) / 2);
+        for (int dx = 0; dx < w; dx++) {
+            int px = x + dx;
+            int sx = (int)(((uint64_t)dx * hstep) >> 12);
+
+            if (px < 0) {
+                continue;
+            }
+            if (px >= (int)width || sx >= sw) {
+                break;
+            }
+            fb[py * width + px] = disp_yuv_rgb565(yrow[sx], cbrow[sx / 2],
+                                                  crrow[sx / 2]);
+            drew = true;
+        }
+    }
+    return drew;
+}
+
+/*
+ * DisplayLayerOrders, the firmware's table at 0x083f35ec: for each order +0x0d4
+ * selects, the blend register -- taken as the stacking position, 0 at the back
+ * -- of blend columns 0 (layer 0), 1 (layers 1..3) and 2 (the video window).
+ * See S5L8702_DISP_ORDER in the header.
  */
 static const uint8_t disp_order[S5L8702_DISP_NORDER][S5L8702_DISP_NLAYER] = {
     { 1, 2, 0 },
@@ -388,30 +486,62 @@ static const uint8_t disp_order[S5L8702_DISP_NORDER][S5L8702_DISP_NLAYER] = {
     { 1, 0, 2 },
 };
 
-bool ipod_classic_disp_compose(IPodClassicDispState *s, uint16_t *fb,
-                               unsigned width, unsigned height)
+/* Draw one blend column. Layers 1..3 share column 1; 3 is taken as the back. */
+static bool disp_draw_column(IPodClassicDispState *s, int column, uint16_t *fb,
+                             unsigned width, unsigned height)
 {
     bool drew = false;
 
+    switch (column) {
+    case 0:
+        return disp_draw_layer(s, 0, fb, width, height);
+    case 1:
+        for (int k = 3; k >= 1; k--) {
+            drew |= disp_draw_layer(s, k, fb, width, height);
+        }
+        return drew;
+    default:
+        return disp_draw_video(s, fb, width, height);
+    }
+}
+
+bool ipod_classic_disp_compose(IPodClassicDispState *s, uint16_t *out,
+                               unsigned width, unsigned height)
+{
+    uint16_t *fb = s->frame;
+    bool drew = false;
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+
+    if ((size_t)width * height > ARRAY_SIZE(s->frame)) {
+        return false;
+    }
+    /*
+     * Every frame starts from black. A model choice: no background-colour
+     * register is known. Composing onto the previous frame instead leaves a
+     * trail wherever a pane slid away from.
+     */
+    memset(fb, 0, (size_t)width * height * sizeof(*fb));
+
     /*
      * A layer is drawn when it has a source address, a positive size AND its
-     * enable bit set in CONTROL (+0x008): bit 6 for layer 0, bit 5 for layer 1,
-     * bit 4 for layer 2. See the header.
+     * enable bit set in CONTROL (+0x008): bit (6 - k) for layer k, bit 7 for
+     * the video window. See the header.
      *
-     * DISP_ALPHA=1 stacks layers 0..2 in the order +0x0d4 selects and blends the
-     * 32-bit layers source-over with their alpha channel. Both are needed for
-     * Now Playing (order 1): layer 0 holds the whole player interface -- title
-     * bar, artist, album, progress bar -- with real alpha, in front of the
-     * opaque album art in layer 1. The language screen's wipe also runs with
-     * order 1: the incoming pane in layer 0 is transparent where the outgoing
-     * one in layer 1 slides out underneath. A game selects order 4, which puts
-     * its frame in layer 1 in front of the opaque grey surface in layer 0.
-     * Layers 3 and 4 have never been programmed and stay at the back.
+     * DISP_ALPHA=1 stacks the three blend columns in the order +0x0d4 selects
+     * and blends the 32-bit layers source-over with their alpha channel. Menus
+     * and Now Playing (order 1) put the video window at the back, layers 1..3
+     * over it and layer 0 in front: layer 0's alpha-0 holes show the video
+     * window's preview background during slides and preview changes, and the
+     * player interface in layer 0 sits over the album art in layer 1. A game
+     * selects order 4, which puts its frame in layer 1 in front of the opaque
+     * grey surface in layer 0. Layer 4 has no blend register and stays at the
+     * back.
      *
-     * Without DISP_ALPHA every layer is opaque and slot order is Z order,
-     * lowest index at the back. Without alpha that is the only order in which
-     * the language wipe works -- slot 1's outgoing pane has to cover slot 0's
-     * incoming one -- but it hides the player interface behind the art.
+     * Without DISP_ALPHA every layer is opaque and slot order is Z order, the
+     * video window at the back and then the lowest slot index. Without alpha
+     * that is the only order in which the language wipe works -- slot 1's
+     * outgoing pane has to cover slot 0's incoming one -- but it hides the
+     * player interface behind the art.
      */
     if (disp_alpha_on()) {
         unsigned order = s->reg[S5L8702_DISP_ORDER >> 2] & 0xff;
@@ -426,16 +556,59 @@ bool ipod_classic_disp_compose(IPodClassicDispState *s, uint16_t *fb,
             }
             order = 1;
         }
-        for (int k = S5L8702_DISP_NSLOTS - 1; k >= S5L8702_DISP_NLAYER; k--) {
+        drew |= disp_draw_layer(s, 4, fb, width, height);
+        for (int p = 0; p < S5L8702_DISP_NLAYER; p++) {
+            for (int c = 0; c < S5L8702_DISP_NLAYER; c++) {
+                if (disp_order[order][c] == p) {
+                    drew |= disp_draw_column(s, c, fb, width, height);
+                }
+            }
+        }
+    } else {
+        drew |= disp_draw_video(s, fb, width, height);
+        for (int k = 0; k < S5L8702_DISP_NSLOTS; k++) {
             drew |= disp_draw_layer(s, k, fb, width, height);
         }
-        for (int i = 0; i < S5L8702_DISP_NLAYER; i++) {
-            drew |= disp_draw_layer(s, disp_order[order][i], fb, width, height);
-        }
-        return drew;
     }
-    for (int k = 0; k < S5L8702_DISP_NSLOTS; k++) {
-        drew |= disp_draw_layer(s, k, fb, width, height);
+    if (disp_trace_on()) {
+        unsigned black = 0;
+
+        for (size_t i = 0; i < (size_t)width * height; i++) {
+            black += fb[i] == 0;
+        }
+        fprintf(stderr, "DISPTRACE frame t=%" PRId64 "us black=%u ctrl=0x%08x "
+                "order=%u", now / 1000, black,
+                s->reg[S5L8702_DISP_CONTROL >> 2],
+                s->reg[S5L8702_DISP_ORDER >> 2] & 0xff);
+        for (int k = 0; k < S5L8702_DISP_NSLOTS; k++) {
+            hwaddr b = S5L8702_DISP_SLOT_BASE + k * S5L8702_DISP_SLOT_STEP;
+            uint32_t pos = s->reg[(b + S5L8702_DISP_SLOT_POS) >> 2];
+            uint32_t size = s->reg[(b + S5L8702_DISP_SLOT_SIZE) >> 2];
+            bool en = s->reg[S5L8702_DISP_CONTROL >> 2] &
+                      S5L8702_DISP_LAYER_EN_BIT(k);
+
+            if (s->reg[(b + S5L8702_DISP_SLOT_SRC) >> 2] == 0) {
+                continue;
+            }
+            fprintf(stderr, "  L%d%s %d,%d %dx%d", k, en ? "" : "(off)",
+                    (int16_t)(pos >> 16), (int16_t)pos,
+                    (int16_t)(size >> 16), (int16_t)size);
+        }
+        if (s->reg[S5L8702_DISP_VIDEO_Y >> 2]) {
+            uint32_t pos = s->reg[S5L8702_DISP_VIDEO_POS >> 2];
+            uint32_t size = s->reg[S5L8702_DISP_VIDEO_SIZE >> 2];
+
+            fprintf(stderr, "  V%s %d,%d %dx%d",
+                    s->reg[S5L8702_DISP_CONTROL >> 2] &
+                    S5L8702_DISP_VIDEO_EN_BIT ? "" : "(off)",
+                    (int16_t)(pos >> 16), (int16_t)pos,
+                    (int16_t)(size >> 16), (int16_t)size);
+        }
+        fputc('\n', stderr);
+    }
+    /* Nothing live: keep the panel image, which may hold port-pushed pixels. */
+    if (drew) {
+        memcpy(out, fb, (size_t)width * height * sizeof(*fb));
     }
     return drew;
 }
