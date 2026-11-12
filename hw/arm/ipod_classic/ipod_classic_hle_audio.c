@@ -58,6 +58,9 @@
  *                          whole song plays (guest CPU then idles in its reset
  *                          spin; audio continues via the DMA + host fill)
  *   HLE_AUDIO_TRACE=1      progress on stderr
+ *   HLE_AUDIO_MAX_SECONDS=N decode only the first N seconds of a track; frames
+ *                          past them play as silence (long test files would
+ *                          otherwise need hours of PCM in host memory)
  */
 
 #include "qemu/osdep.h"
@@ -142,6 +145,7 @@ typedef struct {
     uint64_t    data_start;      /* FAT data area byte offset                  */
     char        disk_path[1024];
     int         force_track;        /* HLE_AUDIO_TRACK, or -1                  */
+    int         max_seconds;        /* HLE_AUDIO_MAX_SECONDS, or 0 = whole track */
 
     /* Track table, filled by the worker's disk scan. */
     HLETrack    tracks[HLE_MAX_TRACKS];
@@ -619,6 +623,10 @@ static uint8_t *hle_decode_track(int k, size_t *out_used)
     close(tfd);
 
     /* Decode to raw s16le stereo 44100 on stdout. */
+    char limit[32] = "";
+    if (hle.max_seconds > 0) {
+        snprintf(limit, sizeof(limit), "-t %d ", hle.max_seconds);
+    }
     if (hle_native) {
         /*
          * For the engine (ipod_classic_hle_audio_frame_pcm): the decoder's
@@ -630,12 +638,12 @@ static uint8_t *hle_decode_track(int k, size_t *out_used)
          * trimmed). The firmware trims the priming itself.
          */
         snprintf(cmd, sizeof(cmd),
-                 "ffmpeg -v error -flags2 +skip_manual -i '%s' -f s16le - "
-                 "2>/dev/null", tmp);
+                 "ffmpeg -v error -flags2 +skip_manual -i '%s' %s-f s16le - "
+                 "2>/dev/null", tmp, limit);
     } else {
         snprintf(cmd, sizeof(cmd),
-                 "ffmpeg -v error -i '%s' -f s16le -ar 44100 -ac 2 - "
-                 "2>/dev/null", tmp);
+                 "ffmpeg -v error -i '%s' %s-f s16le -ar 44100 -ac 2 - "
+                 "2>/dev/null", tmp, limit);
     }
     pp = popen(cmd, "r");
     if (!pp) {
@@ -1632,6 +1640,9 @@ void ipod_classic_hle_audio_init(ARMCPU *cpu, PL080State *dmac0,
 
     if (getenv("HLE_AUDIO_TRACK")) {
         hle.force_track = atoi(getenv("HLE_AUDIO_TRACK"));
+    }
+    if (getenv("HLE_AUDIO_MAX_SECONDS")) {
+        hle.max_seconds = atoi(getenv("HLE_AUDIO_MAX_SECONDS"));
     }
 
     qemu_mutex_init(&hle.lock);
