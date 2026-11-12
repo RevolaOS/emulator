@@ -1202,6 +1202,7 @@ typedef struct {
     unsigned  rate;
     unsigned  channels;
     bool      info_frame;   /* frame 0 is a Xing/Info header, not audio */
+    size_t    last_hit;     /* where the last piece of stream was found */
 } HLEStream;
 
 static HLEStream hle_streams[HLE_MAX_TRACKS];
@@ -1430,10 +1431,26 @@ static bool hle_stream_find(const uint8_t *head, size_t len, int *k_out,
         if (!hle_stream_load(k)) {
             continue;
         }
-        hit = memmem(hle_streams[k].data, hle.tracks[k].size, head, len);
+        /* Playback moves forward a frame at a time, so look just past the
+         * last hit before scanning the whole file (a long file is hundreds of
+         * MB, and a scan per frame starves the guest). */
+        HLEStream *st = &hle_streams[k];
+        size_t near = st->last_hit;
+        size_t span = MIN(hle.tracks[k].size - near, (size_t)(1u << 20));
+        /* The head is a fixed 64 bytes but a low-bitrate frame can be shorter,
+         * and what follows it in the guest's slot is not the next frame; a
+         * shorter needle still pins the position. */
+        hit = NULL;
+        for (size_t n = len; !hit && n >= 16; n /= 2) {
+            hit = memmem(st->data + near, span, head, n);
+        }
+        for (size_t n = len; !hit && n >= 16; n /= 2) {
+            hit = memmem(st->data, hle.tracks[k].size, head, n);
+        }
         if (hit) {
             *k_out = k;
-            *off_out = hit - hle_streams[k].data;
+            *off_out = hit - st->data;
+            st->last_hit = *off_out;
             return true;
         }
     }
