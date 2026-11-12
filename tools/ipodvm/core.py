@@ -201,6 +201,7 @@ class QMP:
 
 # QEMU's ARM register numbers: r0-r15, FPA slots 16-24, CPSR 25.
 REGISTER_NUMBERS = dict({f'r{i}': i for i in range(16)}, sp=13, lr=14, pc=15, cpsr=25)
+CPSR_THUMB = 0x20
 POINT_KINDS = {'hw': 1, 'w': 2, 'r': 3, 'a': 4}
 STOP_TIMEOUT = 10
 KEY_GAP = 1.0      # guest run time between keys sent while waiting for a hit
@@ -325,6 +326,38 @@ class GDB:
 
     def remove(self, point):
         self.command('z%d,%x,%x' % point)
+
+    def call(self, address, *arguments):
+        """Call the guest function at `address` (odd = Thumb) on the stopped
+        task with up to four arguments and return its r0.
+
+        The call returns to the current pc, where r0-r3, r12, lr and the flags
+        are put back, so the stop must be a place where the task may run the
+        function and no other breakpoint may hit meanwhile.
+        """
+        regs = self.registers()
+        thumb = regs['cpsr'] & CPSR_THUMB
+        back = (0, regs['pc'], 2 if thumb else 4)
+        for number, value in enumerate(arguments):
+            self.set_register(number, value)
+        self.set_register(REGISTER_NUMBERS['lr'], regs['pc'] | (1 if thumb else 0))
+        self.set_register(REGISTER_NUMBERS['cpsr'],
+                          regs['cpsr'] & ~CPSR_THUMB | (CPSR_THUMB if address & 1 else 0))
+        self.set_register(REGISTER_NUMBERS['pc'], address & ~1)
+        self.insert(back)
+        try:
+            self.send('c')
+            if self.wait_stop(STOP_TIMEOUT) is None:
+                self.interrupt()
+                raise Failure(f'guest call {address:#010x} did not return')
+        finally:
+            self.remove(back)
+        after = self.registers()
+        if (after['pc'], after['sp']) != (regs['pc'], regs['sp']):
+            raise Failure(f'guest call {address:#010x} stopped at {after["pc"]:#010x}')
+        for name in ('r0', 'r1', 'r2', 'r3', 'r12', 'lr', 'cpsr'):
+            self.set_register(REGISTER_NUMBERS[name], regs[name])
+        return after['r0']
 
 
 def rsp_decode(data):
@@ -1114,31 +1147,10 @@ def asleep(regs):
     return regs.get('pc', 0) in STANDBY_WFI
 
 
-def text_lines(boxes, gap=5):
-    """Join OCR boxes whose tops are within `gap` px into lines, top to bottom."""
-    lines = []
-    for b in sorted(boxes, key=lambda b: (b['y'], b['x'])):
-        if lines and b['y'] - lines[-1][0]['y'] <= gap:
-            lines[-1].append(b)
-        else:
-            lines.append([b])
-    return [' '.join(b['text'] for b in sorted(line, key=lambda b: b['x'])) for line in lines]
-
-
 def check_panic(qmp, frame):
-    """Raise Panic, naming the crash from the panic screen's text, if `frame`
-    is the payload's OS PANIC screen."""
-    if not is_panic(frame):
-        return
-    shot = qmp.shot('panic')
-    from screen import ocr      # screen imports this module
-    try:
-        lines = text_lines(ocr(shot))
-    except Failure:
-        lines = []
-    # The large lines: "OS PANIC", the reason, then LR (software abort) or PC.
-    summary = ', '.join(lines[1:3])
-    raise Panic(f'the iPod crashed (OS PANIC{": " + summary if summary else ""}); {shot}')
+    """Raise Panic, naming a screenshot, if `frame` is the payload's OS PANIC screen."""
+    if is_panic(frame):
+        raise Panic(f'the iPod crashed (OS PANIC); {qmp.shot("panic")}')
 
 
 def settle_frame(qmp, before, limit, region=None, floor=0.0, mask=()):

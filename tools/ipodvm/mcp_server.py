@@ -118,7 +118,7 @@ TOOLS = [
          {'names': {'type': 'array', 'items': {'type': 'string'}},
           'days': {'type': 'number', 'description': 'default 7'},
           'dry_run': {'type': 'boolean'}}),
-    tool('screen', 'Read the screen as JSON: title, rows (label, value, detail, submenu), '
+    tool('screen', 'Read the screen as JSON: title, rows (label, value, detail), '
          'selected row, preview pane text, state (list/other/charging/blank/panic); asleep '
          'when the firmware is in standby (the last frame stays on screen).',
          {'name': NAME, 'image': IMAGE}),

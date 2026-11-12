@@ -14,15 +14,14 @@ ipodvm goto "Settings/Theme"
 ipodvm screen
 ```
 
-Requirements: Python 3 (standard library only), the QEMU build in `build/`,
-Xcode's `swiftc` for screen reading, and mtools for `disk`. Add `--json` to
-any command for machine-readable output.
+Requirements: Python 3 (standard library only), the QEMU build in `build/`
+and mtools for `disk`. Add `--json` to any command for machine-readable
+output.
 
 | File | Contents |
 | --- | --- |
 | `core.py` | QMP, launch, input, screenshots, test disks, profiler control |
 | `screen.py` | screen reading and `goto` navigation |
-| `screentext.swift` | Vision text recognition, compiled to `build/ipodvm/screentext` on first use |
 | `ipodvm.py` | command line |
 | `mcp_server.py` | MCP server (stdio) |
 | `heap-hooks-2.0.5.txt` | stock 2.0.5 allocator hooks for `launch --heap` |
@@ -111,34 +110,44 @@ with `--title`. `--headless` runs without a window.
 ## Reading the screen
 
 `screen` returns the title, the visible rows (label, value such as `Off`,
-second-line detail such as `99 Songs`, submenu arrow), the selected row and
-the preview pane text. `state` is `list`, `other` (Now Playing, About, …),
-`charging` (the idle Charging screen; any key wakes it), `blank` or `panic`
-(the RepriseOS payload's OS PANIC screen; `text` holds its lines).
+second-line detail such as `99 Songs`), the selected row and the preview pane
+text. `state` is `list`, `other` (Now Playing, About, …; `text` holds its
+strings), `charging` (the idle Charging screen; any key wakes it), `blank` or
+`panic` (the RepriseOS payload's OS PANIC screen).
 
-Text comes from macOS Vision. The selection bar is found from pixels rather
+Text is what the firmware draws, in any language and complete even where the
+screen truncates or scrolls it. A read stops the guest at the top of its UI
+loop, calls `View_InvalidateRect` on the root view and collects every string
+of the redraw that follows with breakpoints on `TextView_DrawString`, the
+marquee draw and `GraphicsContext_DrawUtf8` (RevolaOS canvas pages); no
+breakpoint stays behind. It takes 0.1 to 0.3 s, during which live audio can
+gap. A paused guest runs a frame or two and stays stopped.
+The addresses are those of firmware 2.0.5; other firmware gives no text.
+Neither does a UI loop that does not run (boot, standby, a busy UI task; the
+read gives up after a second), and during a screen transition only the title
+is drawn. `goto` reads after the screen has settled.
+
+The selected row is the one whose text view has the selected-row class, or
+the one under the selection bar when no view has it. Row geometry comes from
+the selection bar, which is found from pixels rather
 than a fixed colour, so it does not depend on the theme, accent colour or dark
 mode: it is the longest run of rows, at most 70 px tall, whose colour at x = 1
 or x = 158 (inside the bar on half- and full-width lists, which covers rows
 where a scrolling label crosses x = 1) differs strongly from the list
 background, trimmed to its first and last row marked at x = 1 (a scrollbar
 thumb next to the bar also marks x = 158). The bar's width, followed pixel by
-pixel along its top and bottom rows, separates half-width lists with a preview pane from full-width lists. Vision recognises English only:
-automatic language detection makes each read wait on Neural Engine model
-compilation for over a minute. Language names in other scripts on the
-Language screen read as approximate Latin letters or not at all, but
-`English` reads correctly. Vision can misread individual glyphs, and a
-selected label that is too long scrolls and reads garbled.
+pixel along its top and bottom rows, separates half-width lists with a
+preview pane from full-width lists. On lists with artwork the bar is looked
+for at the column where the text starts.
 
 ## Navigating
 
 `goto Settings/Theme` returns to the main menu with Menu (passing the
 Language screen and waking the Charging screen), then for each label scrolls
 until that row is selected and opens it. Labels match exactly, then as a
-truncated `…` label, then as a prefix, ignoring case. A garbled scrolling
-label is confirmed from the rows above and below it. Rows not on screen are
-searched downwards, then upwards; the error lists every row seen. `--here`
-starts from the current screen. Selecting a toggle row toggles it.
+prefix, ignoring case. Rows not on screen are searched downwards, then
+upwards; the error lists every row seen. `--here` starts from the current
+screen. Selecting a toggle row toggles it.
 
 Wheel keys go in batches of at most three, and each batch is verified by
 reading the screen again. Opening a row uses the verified Select below.

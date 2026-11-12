@@ -26,8 +26,6 @@ def show_screen(data):
         text = row['label']
         if row.get('value'):
             text += f' = {row["value"]}'
-        if row.get('submenu'):
-            text += '  ›'
         if row.get('detail'):
             text += f'  ({row["detail"]})'
         print(f' {mark} {text}')
