@@ -792,7 +792,7 @@ def prepare_disk(base, out, themes=None, clean=True, copies=()):
 def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=False,
            wait=True, boot_timeout=180, elf=None, profile=None, fns=None, trace=False,
            timeline=None, signpost=False, heap=None, symbols=None, cwd=None,
-           power='adapter', persist=False, battery=None):
+           power='adapter', persist=False, battery=None, record_audio=False):
     """Start a VM; with `wait`, return once the first screen is stable."""
     cwd = Path(cwd or Path.cwd())
     firmware = Path(firmware).expanduser().resolve()
@@ -828,8 +828,11 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=
     # -snapshot keeps guest writes off the clone too.
     subprocess.run(['cp', '-c', str(disk), str(run / 'disk.img')], check=True)
 
-    environment = dict(ENVIRONMENT, HLE_AUDIO_DISK=str(run / 'disk.img'),
-                       AUDIOWAV=str(run / 'audio.wav'))
+    environment = dict(ENVIRONMENT, HLE_AUDIO_DISK=str(run / 'disk.img'))
+    # The I2S model records every FIFO write while AUDIOWAV is set; the file
+    # grows by 176 KB per second of playback, so only runs that ask get one.
+    if record_audio:
+        environment['AUDIOWAV'] = str(run / 'audio.wav')
     environment.pop('PMUCHARGER', None)
     if POWER[power]:
         environment['PMUCHARGER'] = POWER[power]
@@ -850,7 +853,7 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=
                '-display', 'none' if headless else 'sdl']
     # A windowed VM plays through the host's output; SDL is the build's only
     # live backend. The codec boots at -32 dB, so 20 dB of make-up gain gives a
-    # normal desk level. Headless VMs stay silent and only record AUDIOWAV.
+    # normal desk level. Headless VMs stay silent.
     if not headless:
         environment.update(AUDIOLIVE='1', AUDIOGAIN='20')
         command += ['-audio', 'sdl']
@@ -891,7 +894,7 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=
     record = {'title': title, 'command': command, 'environment': environment,
               'firmware': {'path': str(firmware), 'sha256': hashlib.sha256(image).hexdigest()},
               'disk': str(disk), 'layout': str(layout.resolve()), 'profile': profiling,
-              'power': power, 'persist': persist,
+              'power': power, 'persist': persist, 'record_audio': record_audio,
               'battery': DEFAULT_BATTERY if battery is None else battery}
     (run / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
 
@@ -913,7 +916,8 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=
     time.sleep(0.3)
     result = {'name': name, 'pid': process.pid, 'run': str(run), 'title': title,
               'profile': profiling, 'power': power,
-              'disk': str(run / 'disk.img') if persist else None}
+              'disk': str(run / 'disk.img') if persist else None,
+              'audio': str(run / 'audio.wav') if record_audio else None}
     if not wait:
         result['state'] = 'booting'
         return result
@@ -950,6 +954,7 @@ def status(name):
             'profile': record.get('profile'), 'power': record.get('power', 'adapter'),
             'persist': record.get('persist', False), 'speed': record.get('speed', 1),
             'hold': record.get('hold', False),
+            'audio': str(run / 'audio.wav') if record.get('record_audio') else None,
             'battery': record.get('battery', DEFAULT_BATTERY), 'run': str(run)}
 
 

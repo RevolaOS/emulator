@@ -42,7 +42,7 @@ TOOLS = [
          'return once the first screen is stable (VM left running). Takes 45-75 s. Opens '
          'a live window unless headless. The firmware enters standby after about two '
          'minutes idle only on battery or USB power; any key wakes it. vm_power changes '
-         'the power while running.',
+         'the power while running. Audio is recorded only with record_audio.',
          {'firmware': {'type': 'string', 'description': 'path to osos-cfw.bin'},
           'disk': {'type': 'string', 'description': 'test disk image (cloned, never modified)'},
           'repo': {'type': 'string', 'description': 'firmware repository (for '
@@ -56,6 +56,8 @@ TOOLS = [
                     'idles on the Charging screen and never enters standby)'},
           'persist': {'type': 'boolean', 'description': 'write guest disk changes to the '
                       'run\'s disk clone (no -snapshot); the result reports its path'},
+          'record_audio': {'type': 'boolean', 'description': 'record the guest\'s audio to '
+                           'the run\'s audio.wav; the result reports its path'},
           'battery': {'type': 'integer', 'minimum': 0, 'maximum': 1023,
                       'description': 'raw battery reading (default 844); see vm_battery'},
           'elf': {'type': 'string', 'description': 'payload.elf matching firmware, for profiling'},
@@ -216,7 +218,8 @@ def call(name, a):
                            signpost=a.get('signpost', False), heap=a.get('heap'),
                            symbols=path('symbols'), cwd=str(repo),
                            power=a.get('power', 'adapter'), persist=a.get('persist', False),
-                           battery=a.get('battery'))
+                           battery=a.get('battery'),
+                           record_audio=a.get('record_audio', False))
     if name == 'disk_prepare':
         return core.prepare_disk(a['base'], a['out'], a.get('themes'),
                                  not a.get('keep_themes', False))

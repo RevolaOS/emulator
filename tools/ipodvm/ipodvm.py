@@ -201,6 +201,8 @@ def main():
                         'Charging screen and never enters standby)')
     p.add_argument('--persist', action='store_true',
                    help='write guest disk changes to the run\'s disk clone (no -snapshot)')
+    p.add_argument('--record-audio', action='store_true',
+                   help='record the guest\'s audio to the run\'s audio.wav (16-bit stereo PCM)')
     p.add_argument('--battery', type=int, metavar='RAW',
                    help=f'raw battery reading, 0-{core.MAX_BATTERY} '
                         f'(default {core.DEFAULT_BATTERY})')
@@ -222,7 +224,8 @@ def main():
     p.set_defaults(func=lambda a: core.launch(
         a.name, a.firmware, a.disk, a.layout, a.title, a.headless, a.pause, not a.no_wait,
         a.boot_timeout, a.elf, a.profile, a.fn, a.trace, a.timeline, a.signpost, a.heap,
-        a.symbols, power=a.power, persist=a.persist, battery=a.battery))
+        a.symbols, power=a.power, persist=a.persist, battery=a.battery,
+        record_audio=a.record_audio))
 
     p = sub.add_parser('disk', help='clone a test disk and install theme packs')
     p.add_argument('--base', required=True, help='disk image to clone (never modified)')

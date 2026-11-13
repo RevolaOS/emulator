@@ -40,9 +40,10 @@ The FAT32 volume offset is found from the MBR (iPod disks use 4 KiB sectors).
 Each VM lives in `/tmp/ipodvm/<name>/` (default name `vm`, select with `-n`).
 The short path keeps `qmp.sock` and `gdb.sock` under macOS's 104-byte Unix
 socket limit. The directory holds `launch.json` (command, environment,
-firmware SHA-256, disk, layout), `qemu.log`, `audio.wav`, `shots/` and
-profiler output. The disk is an APFS clone of `--disk`, so `--disk` is never
-written, and QEMU runs with `-snapshot`, so the clone is not written either.
+firmware SHA-256, disk, layout), `qemu.log`, `shots/`, profiler output and,
+with `--record-audio`, `audio.wav`. The disk is an APFS clone of `--disk`, so
+`--disk` is never written, and QEMU runs with `-snapshot`, so the clone is not
+written either.
 `--persist` drops `-snapshot`: guest writes then reach the run's `disk.img`,
 which can be inspected with mtools after `quit`. Launching a name again
 replaces its stopped run directory, including screenshots, profiles and the
@@ -101,8 +102,9 @@ reports it.
 
 `launch` opens an SDL window showing the live screen; it also accepts keys
 typed into it, and plays the guest's audio through the host's output
-(`AUDIOLIVE=1`, `AUDIOGAIN=20`). Headless VMs are silent and only record
-`audio.wav`. Paused guests show their last frame. The title (also shown by
+(`AUDIOLIVE=1`, `AUDIOGAIN=20`). Headless VMs are silent. `--record-audio`
+writes the guest's output to the run's `audio.wav` (16-bit stereo PCM) in
+either mode. Paused guests show their last frame. The title (also shown by
 `list` and `status`) names the VM, the repository and branch it was launched
 from, and the Claude Code session ID prefix when there is one; override it
 with `--title`. `--headless` runs without a window.
