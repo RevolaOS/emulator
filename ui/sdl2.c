@@ -34,6 +34,11 @@
 #include "sysemu/sysemu.h"
 #include "ui/win32-kbd-hook.h"
 #include "qemu/log.h"
+#include "qemu/coroutine.h"
+#include "qemu/error-report.h"
+#include "qemu/timer.h"
+#include "qapi/error.h"
+#include "qapi/qapi-commands-ui.h"
 
 static int sdl2_num_outputs;
 static struct sdl2_console *sdl2_console;
@@ -53,6 +58,7 @@ static int guest_cursor;
 static int guest_x, guest_y;
 static SDL_Cursor *guest_sprite;
 static Notifier mouse_mode_notifier;
+static QEMUTimer *caption_restore_timer;
 
 #define SDL2_REFRESH_INTERVAL_BUSY 10
 #define SDL2_MAX_IDLE_COUNT (2 * GUI_REFRESH_INTERVAL_DEFAULT \
@@ -200,6 +206,96 @@ static void sdl_update_caption(struct sdl2_console *scon)
     if (scon->real_window) {
         SDL_SetWindowTitle(scon->real_window, win_title);
     }
+}
+
+
+/*
+ * Cmd+S (GUI modifier) saves the console as a PNG. SCREENSHOT_DIR names the
+ * directory (default: the working directory) and SCREENSHOT_NAME the file
+ * prefix (default "qemu"); files are <prefix>-YYYYMMDD-HHMMSS.png, with -2,
+ * -3, ... appended when a second shot lands within the same second.
+ */
+#define SDL2_CAPTION_FLASH_MS 1500
+
+static void caption_restore(void *opaque)
+{
+    sdl_update_caption(opaque);
+}
+
+static void sdl2_flash_caption(struct sdl2_console *scon, const char *text)
+{
+    if (!scon->real_window) {
+        return;
+    }
+    SDL_SetWindowTitle(scon->real_window, text);
+    if (!caption_restore_timer) {
+        caption_restore_timer = timer_new_ms(QEMU_CLOCK_REALTIME,
+                                             caption_restore, scon);
+    }
+    timer_mod(caption_restore_timer,
+              qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + SDL2_CAPTION_FLASH_MS);
+}
+
+static char *sdl2_screenshot_path(void)
+{
+    const char *dir = getenv("SCREENSHOT_DIR");
+    const char *prefix = getenv("SCREENSHOT_NAME");
+    char stamp[32];
+    time_t now = time(NULL);
+    struct tm tm;
+    int n;
+
+    localtime_r(&now, &tm);
+    strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm);
+    if (!dir || !*dir) {
+        dir = ".";
+    }
+    if (!prefix || !*prefix) {
+        prefix = "qemu";
+    }
+    for (n = 1; ; n++) {
+        char *path = n == 1
+            ? g_strdup_printf("%s/%s-%s.png", dir, prefix, stamp)
+            : g_strdup_printf("%s/%s-%s-%d.png", dir, prefix, stamp, n);
+        if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
+            return path;
+        }
+        g_free(path);
+    }
+}
+
+struct sdl2_screenshot_job {
+    struct sdl2_console *scon;
+    char *path;
+};
+
+static void coroutine_fn sdl2_screenshot_co(void *opaque)
+{
+    struct sdl2_screenshot_job *job = opaque;
+    Error *err = NULL;
+
+    qmp_screendump(job->path, NULL, false, 0, true, IMAGE_FORMAT_PNG, &err);
+    if (err) {
+        g_autofree char *text = g_strdup_printf("Screenshot failed: %s",
+                                                error_get_pretty(err));
+        sdl2_flash_caption(job->scon, text);
+        error_report_err(err);
+    } else {
+        g_autofree char *base = g_path_get_basename(job->path);
+        g_autofree char *text = g_strdup_printf("Saved %s", base);
+        sdl2_flash_caption(job->scon, text);
+    }
+    g_free(job->path);
+    g_free(job);
+}
+
+static void sdl2_screenshot(struct sdl2_console *scon)
+{
+    struct sdl2_screenshot_job *job = g_new0(struct sdl2_screenshot_job, 1);
+
+    job->scon = scon;
+    job->path = sdl2_screenshot_path();
+    qemu_coroutine_enter(qemu_coroutine_create(sdl2_screenshot_co, job));
 }
 
 static void sdl_hide_cursor(struct sdl2_console *scon)
@@ -395,7 +491,14 @@ static void handle_keydown(SDL_Event *ev)
         return;
     }
 
-    if (!scon->ignore_hotkeys && gui_key_modifier_pressed && !ev->key.repeat) {
+    if (ev->key.keysym.scancode == SDL_SCANCODE_S &&
+        (SDL_GetModState() & KMOD_GUI) && !ev->key.repeat) {
+        sdl2_screenshot(scon);
+        gui_keysym = 1;
+    }
+
+    if (!gui_keysym && !scon->ignore_hotkeys && gui_key_modifier_pressed &&
+        !ev->key.repeat) {
         switch (ev->key.keysym.scancode) {
         case SDL_SCANCODE_2:
         case SDL_SCANCODE_3:
