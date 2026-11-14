@@ -855,7 +855,9 @@ def launch(name, firmware, disk, layout=None, title=None, headless=False, pause=
     # live backend. The codec boots at -32 dB, so 20 dB of make-up gain gives a
     # normal desk level. Headless VMs stay silent.
     if not headless:
-        environment.update(AUDIOLIVE='1', AUDIOGAIN='20')
+        environment.update(AUDIOLIVE='1', AUDIOGAIN='20',
+                           SCREENSHOT_DIR=str(Path.home() / 'Desktop'),
+                           SCREENSHOT_NAME=f'ipodvm-{name}')
         command += ['-audio', 'sdl']
 
     profiling = None

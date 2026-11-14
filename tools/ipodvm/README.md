@@ -107,7 +107,10 @@ writes the guest's output to the run's `audio.wav` (16-bit stereo PCM) in
 either mode. Paused guests show their last frame. The title (also shown by
 `list` and `status`) names the VM, the repository and branch it was launched
 from, and the Claude Code session ID prefix when there is one; override it
-with `--title`. `--headless` runs without a window.
+with `--title`. Cmd+S in the window saves the screen as
+`~/Desktop/ipodvm-NAME-YYYYMMDD-HHMMSS.png` and flashes the file name in the
+title; this is separate from `shot` and the run's `shots/`. `--headless` runs
+without a window.
 
 ## Reading the screen
 

@@ -239,10 +239,14 @@ bus before that gain.
 | `w` | MENU |
 | `a` / `d` | previous / next |
 | `s` | PLAY / PAUSE |
+| Cmd+S | save the screen as a PNG (host shortcut, not sent to the guest) |
 
 Same as the 5G machine, so one habit covers both. In the SDL window the mouse also
 works: the scroll wheel turns the click wheel, the left button is SELECT and the
 right button is MENU.
+
+Cmd+S writes `$SCREENSHOT_DIR/$SCREENSHOT_NAME-YYYYMMDD-HHMMSS.png` (defaults: the
+working directory and `qemu`) and shows the file name in the title for a moment.
 
 Wheel steps and button edges go into one ordered queue. The model sends the next
 packet only after the guest's wheel task has consumed the previous one, which it
